@@ -18,6 +18,7 @@ export interface EventTypeValues {
   meeting_provider: string;
   color: string;
   is_active: boolean;
+  organization_id: string;
 }
 
 const inputCls =
@@ -46,10 +47,12 @@ export function EventTypeForm({
   initial,
   action,
   submitLabel,
+  organizations,
 }: {
   initial: EventTypeValues;
   action: (formData: FormData) => Promise<void>;
   submitLabel: string;
+  organizations?: { id: string; name: string }[];
 }) {
   const [paid, setPaid] = useState(Number(initial.price_rupees) > 0);
 
@@ -70,6 +73,25 @@ export function EventTypeForm({
               <textarea name="description" rows={3} defaultValue={initial.description} placeholder="What should guests expect?" className={inputCls} />
             </Field>
           </div>
+          {(organizations ?? []).length > 0 && (
+            <Field
+              label="Workspace"
+              hint="Team events are visible to everyone in the workspace."
+            >
+              <select
+                name="organization_id"
+                defaultValue={initial.organization_id}
+                className={inputCls}
+              >
+                <option value="">Personal (only me)</option>
+                {organizations!.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
           <Field label="Color">
             <input name="color" type="color" defaultValue={initial.color} className="h-11 w-20 cursor-pointer rounded-lg border border-slate-300" />
           </Field>

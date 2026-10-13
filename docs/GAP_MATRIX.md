@@ -17,8 +17,8 @@ No existing migrations were modified; all proposed schema work is additive.
 | Requirement | Status | Evidence / notes |
 |---|---|---|
 | Auth (password + magic link) | ✅ | `src/app/login`, `src/app/signup`, `src/app/auth/callback`, `src/proxy.ts` |
-| Organizations / workspaces | ⚠️ | `organizations`, `organization_members` tables exist; app runs solo profile-owned model, no workspace switching UI |
-| Roles & permission enforcement | ❌ | `role` column exists on memberships but is not enforced beyond owner checks |
+| Organizations / workspaces | ✅ | `organizations` + `organization_members` with `/dashboard/team`: create team, invite by email (token link, 7-day expiry), roles, member management; `/invite/[token]` acceptance flow (2026-10-13) |
+| Roles & permission enforcement | ⚠️ | owner/admin/member roles on memberships; enforced in team UI (owners/admins manage invites, owners manage roles) + existing RLS (`is_org_member`, `can_manage_event_type`); event types assignable to workspaces, team members see/edit org events & bookings (2026-10-13) |
 | Services (event types) | ✅ | `src/app/dashboard/event-types` CRUD + `event_types` table |
 | Staff model | ❌ | No staff table/UI; blocks round-robin, collective, staff calendars |
 | Availability (weekly) | ✅ | `src/app/dashboard/availability`, `schedules` table |
@@ -92,7 +92,7 @@ Per spec §15.1 (small vertical slices, additive migrations only):
 7. ✅ **Outbox** (2026-10-13)
 8. ✅ **Busy-time integration** (2026-10-13)
 9. ✅ **Internal calendar week view** + sync-health indicators (2026-10-13)
-10. ✅ Page builder, ✅ template editor, ✅ CRM basics, ✅ reports (2026-10-13). Remaining: roles/workspaces/staff
+10. ✅ Page builder, ✅ template editor, ✅ CRM basics, ✅ reports, ✅ teams/roles phase 1 (2026-10-13). Remaining: staff scheduling modes (round-robin/collective), manual staff booking
 
 Each slice ships with: UI states (loading/empty/error), server enforcement, and a
 manual end-to-end check on the Vercel deployment before the next slice starts.

@@ -47,6 +47,18 @@ export async function createEventType(formData: FormData) {
   const slug = slugify(String(formData.get("slug") ?? "") || title);
   if (!slug) throw new Error("Slug is required");
 
+  // Workspace assignment — must be a member of the org.
+  const organizationId = String(formData.get("organization_id") ?? "") || null;
+  if (organizationId) {
+    const { data: membership } = await supabase
+      .from("organization_members")
+      .select("organization_id")
+      .eq("organization_id", organizationId)
+      .eq("profile_id", user.id)
+      .maybeSingle();
+    if (!membership) throw new Error("You are not a member of that workspace.");
+  }
+
   const { data: profile } = await supabase
     .from("profiles")
     .select("timezone")
@@ -62,6 +74,7 @@ export async function createEventType(formData: FormData) {
 
   const { error } = await supabase.from("event_types").insert({
     owner_profile_id: user.id,
+    organization_id: organizationId,
     title,
     slug,
     description: String(formData.get("description") ?? "") || null,
@@ -97,10 +110,23 @@ export async function updateEventType(id: string, formData: FormData) {
   if (!title) throw new Error("Title is required");
   const priceRupees = num(formData.get("price_rupees"), 0);
 
+  // Workspace assignment — must be a member of the org.
+  const organizationId = String(formData.get("organization_id") ?? "") || null;
+  if (organizationId) {
+    const { data: membership } = await supabase
+      .from("organization_members")
+      .select("organization_id")
+      .eq("organization_id", organizationId)
+      .eq("profile_id", user.id)
+      .maybeSingle();
+    if (!membership) throw new Error("You are not a member of that workspace.");
+  }
+
   const { error } = await supabase
     .from("event_types")
     .update({
       title,
+      organization_id: organizationId,
       slug: slugify(String(formData.get("slug") ?? "") || title),
       description: String(formData.get("description") ?? "") || null,
       duration_minutes: Math.max(5, num(formData.get("duration_minutes"), 30)),
@@ -117,8 +143,9 @@ export async function updateEventType(id: string, formData: FormData) {
       color: String(formData.get("color") ?? "#4f46e5"),
       is_active: formData.get("is_active") === "on",
     })
-    .eq("id", id)
-    .eq("owner_profile_id", user.id);
+    .eq("id", id);
+  // Ownership enforced by RLS (can_manage_event_type) — team members can
+  // edit workspace event types.
 
   if (error) {
     if (error.code === "23505") throw new Error("That URL slug is already taken.");
@@ -133,8 +160,8 @@ export async function deleteEventType(id: string) {
   const { error } = await supabase
     .from("event_types")
     .delete()
-    .eq("id", id)
-    .eq("owner_profile_id", user.id);
+    .eq("id", id);
+  // Ownership enforced by RLS (can_manage_event_type).
   if (error) throw new Error(error.message);
   revalidatePath("/dashboard/event-types");
 }

@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { EventTypeForm, type EventTypeValues } from "@/components/event-type-form";
 import { updateEventType } from "../../../actions";
+import { getUserOrgs } from "@/lib/teams";
 
 export default async function EditEventTypePage({
   params,
@@ -15,11 +16,11 @@ export default async function EditEventTypePage({
   } = await supabase.auth.getUser();
   if (!user) return null;
 
+  // RLS (can_manage_event_type) allows team members to edit workspace events.
   const { data: et } = await supabase
     .from("event_types")
     .select("*")
     .eq("id", id)
-    .eq("owner_profile_id", user.id)
     .maybeSingle();
 
   if (!et) notFound();
@@ -39,8 +40,10 @@ export default async function EditEventTypePage({
     meeting_provider: et.meeting_provider,
     color: et.color,
     is_active: et.is_active,
+    organization_id: (et.organization_id as string | null) ?? "",
   };
 
+  const orgs = await getUserOrgs(supabase, user.id);
   const update = updateEventType.bind(null, id);
 
   return (
@@ -54,6 +57,10 @@ export default async function EditEventTypePage({
           initial={initial}
           action={update}
           submitLabel="Save changes"
+          organizations={orgs.map((o) => ({
+            id: o.organization_id,
+            name: o.organizations.name,
+          }))}
         />
       </div>
     </div>

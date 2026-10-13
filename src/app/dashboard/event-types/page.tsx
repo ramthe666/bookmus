@@ -53,11 +53,28 @@ export default async function EventTypesPage() {
   } = await supabase.auth.getUser();
   if (!user) return null;
 
-  const { data: eventTypes } = await supabase
+  // Personal events + workspace events (RLS already restricts to what the
+  // user can manage — this filter only shapes the list).
+  const { data: orgIds } = await supabase
+    .from("organization_members")
+    .select("organization_id")
+    .eq("profile_id", user.id);
+  const orgList = (orgIds ?? []).map((r) => r.organization_id as string);
+
+  let query = supabase
     .from("event_types")
-    .select("id, title, slug, description, duration_minutes, price_paise, is_active, color")
-    .eq("owner_profile_id", user.id)
+    .select(
+      "id, title, slug, description, duration_minutes, price_paise, is_active, color, organization_id, organizations(name)"
+    )
     .order("created_at", { ascending: false });
+  if (orgList.length > 0) {
+    query = query.or(
+      `owner_profile_id.eq.${user.id},organization_id.in.(${orgList.join(",")})`
+    );
+  } else {
+    query = query.eq("owner_profile_id", user.id);
+  }
+  const { data: eventTypes } = await query;
 
   const { data: profile } = await supabase
     .from("profiles")
@@ -111,6 +128,20 @@ export default async function EventTypesPage() {
                       Off
                     </span>
                   )}
+                  {(() => {
+                    const org = et.organizations as unknown as
+                      | { name: string }
+                      | { name: string }[]
+                      | null;
+                    const name = Array.isArray(org) ? org[0]?.name : org?.name;
+                    return (
+                      name && (
+                        <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700">
+                          {name}
+                        </span>
+                      )
+                    );
+                  })()}
                 </div>
                 <p className="mt-0.5 truncate text-sm text-slate-500">
                   {et.duration_minutes} min

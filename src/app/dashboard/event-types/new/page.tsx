@@ -1,5 +1,7 @@
 import { EventTypeForm, type EventTypeValues } from "@/components/event-type-form";
 import { createEventType } from "../../actions";
+import { createClient } from "@/lib/supabase/server";
+import { getUserOrgs } from "@/lib/teams";
 
 const defaults: EventTypeValues = {
   title: "",
@@ -16,9 +18,16 @@ const defaults: EventTypeValues = {
   meeting_provider: "google_meet",
   color: "#4f46e5",
   is_active: true,
+  organization_id: "",
 };
 
-export default function NewEventTypePage() {
+export default async function NewEventTypePage() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const orgs = user ? await getUserOrgs(supabase, user.id) : [];
+
   return (
     <div className="mx-auto max-w-3xl">
       <h1 className="text-2xl font-bold tracking-tight text-slate-900">
@@ -32,6 +41,10 @@ export default function NewEventTypePage() {
           initial={defaults}
           action={createEventType}
           submitLabel="Create event type"
+          organizations={orgs.map((o) => ({
+            id: o.organization_id,
+            name: o.organizations.name,
+          }))}
         />
       </div>
     </div>
