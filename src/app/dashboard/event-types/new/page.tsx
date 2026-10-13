@@ -19,6 +19,7 @@ const defaults: EventTypeValues = {
   color: "#4f46e5",
   is_active: true,
   is_private: false,
+  questions: [],
   organization_id: "",
   scheduling_mode: "single",
   host_ids: [],

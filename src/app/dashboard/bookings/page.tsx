@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { QuestionAnswers } from "./question-answers";
 import { cancelBooking } from "../actions";
 import { CopyLinkButton } from "./copy-link-button";
 
@@ -60,10 +61,26 @@ export default async function BookingsPage() {
   const { data: bookings } = await supabase
     .from("bookings")
     .select(
-      "id, starts_at, ends_at, status, booker_name, booker_email, cancel_token, calendar_sync_status, calendar_sync_error, assigned_profile_id, event_types!inner(title), assigned:profiles!bookings_assigned_profile_id_fkey(display_name)"
+      "id, event_type_id, starts_at, ends_at, status, booker_name, booker_email, booker_notes, cancel_token, calendar_sync_status, calendar_sync_error, assigned_profile_id, question_answers, event_types!inner(title), assigned:profiles!bookings_assigned_profile_id_fkey(display_name)"
     )
     .order("starts_at", { ascending: false })
     .limit(200);
+
+  // Question labels for answer display.
+  const eventTypeIds = [...new Set((bookings ?? []).map((b) => b.event_type_id as string))];
+  const { data: questionRows } = eventTypeIds.length
+    ? await supabase
+        .from("event_type_questions")
+        .select("id, event_type_id, label")
+        .in("event_type_id", eventTypeIds)
+        .order("position")
+    : { data: [] };
+  const questionsByEvent = new Map<string, { id: string; label: string }[]>();
+  for (const q of (questionRows ?? []) as { id: string; event_type_id: string; label: string }[]) {
+    const list = questionsByEvent.get(q.event_type_id) ?? [];
+    list.push({ id: q.id, label: q.label });
+    questionsByEvent.set(q.event_type_id, list);
+  }
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -134,6 +151,10 @@ export default async function BookingsPage() {
                         </Link>
                       </p>
                     )}
+                    <QuestionAnswers
+                      answers={(b.question_answers ?? {}) as Record<string, string>}
+                      questions={questionsByEvent.get(b.event_type_id as string) ?? []}
+                    />
                   </div>
                   <p className="shrink-0 text-sm font-medium text-slate-700">
                     {formatInTz(b.starts_at, tz)}

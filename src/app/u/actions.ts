@@ -363,6 +363,33 @@ export async function pickRoundRobinHost(
   return best?.profileId ?? freeHosts[0].profileId;
 }
 
+/** Public questions for an event type (RLS: active events). */
+export async function getEventQuestions(
+  eventTypeId: string
+): Promise<
+  {
+    id: string;
+    label: string;
+    field_type: string;
+    is_required: boolean;
+    options: string[];
+  }[]
+> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("event_type_questions")
+    .select("id, label, field_type, is_required, options")
+    .eq("event_type_id", eventTypeId)
+    .order("position");
+  return ((data ?? []) as unknown as {
+    id: string;
+    label: string;
+    field_type: string;
+    is_required: boolean;
+    options: string[];
+  }[]).map((q) => ({ ...q, options: (q.options ?? []) as string[] }));
+}
+
 /** Dates in a month (1-12) that have at least one bookable slot. */
 export async function getMonthAvailability(
   eventTypeId: string,
@@ -426,6 +453,7 @@ export interface CreateBookingInput {
   notes?: string;
   bookerTimezone: string;
   idempotencyKey: string;
+  questionAnswers?: Record<string, string>;
 }
 
 export interface BookingResult {
@@ -461,6 +489,26 @@ export async function createBooking(
   const startsAt = new Date(wanted);
   const endsAt = new Date(startsAt.getTime() + ctx.duration_minutes * 60000);
 
+  // Validate custom question answers (required + option allowlist).
+  const questions = await getEventQuestions(input.eventTypeId);
+  const answers: Record<string, string> = {};
+  for (const q of questions) {
+    const raw = (input.questionAnswers?.[q.id] ?? "").trim();
+    if (q.is_required && !raw) {
+      throw new Error(`Please answer: ${q.label}`);
+    }
+    if (raw) {
+      if (
+        (q.field_type === "select" || q.field_type === "radio") &&
+        q.options.length > 0 &&
+        !q.options.includes(raw)
+      ) {
+        throw new Error(`Invalid answer for: ${q.label}`);
+      }
+      answers[q.id] = raw.slice(0, 2000);
+    }
+  }
+
   // Host assignment for team events (spec §5).
   let assignedProfileId: string | null = null;
   if (ctx.schedulingMode === "round_robin") {
@@ -487,6 +535,7 @@ export async function createBooking(
       timezone: ctx.hostTimezone,
       status: needsPayment ? "pending" : "confirmed",
       assigned_profile_id: assignedProfileId,
+      question_answers: answers,
       booker_name: name,
       booker_email: email,
       booker_phone: input.phone?.trim() || null,

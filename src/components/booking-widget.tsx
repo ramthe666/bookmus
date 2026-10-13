@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   getMonthAvailability,
   getSlotsForDate,
+  getEventQuestions,
   createBooking,
   confirmRazorpayPayment,
   type BookingResult,
@@ -159,6 +160,16 @@ export function BookingWidget(props: BookingWidgetProps) {
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [notes, setNotes] = useState("");
+  const [questions, setQuestions] = useState<
+    {
+      id: string;
+      label: string;
+      field_type: string;
+      is_required: boolean;
+      options: string[];
+    }[]
+  >([]);
+  const [answers, setAnswers] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<{
@@ -190,6 +201,19 @@ export function BookingWidget(props: BookingWidgetProps) {
       cancelled = true;
     };
   }, [eventTypeId, cursor]);
+
+  // Custom questions
+  useEffect(() => {
+    let cancelled = false;
+    getEventQuestions(eventTypeId)
+      .then((q) => {
+        if (!cancelled) setQuestions(q);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [eventTypeId]);
 
   const pickDate = useCallback(
     async (dateStr: string) => {
@@ -290,6 +314,7 @@ export function BookingWidget(props: BookingWidgetProps) {
         notes,
         bookerTimezone: guestTz,
         idempotencyKey: crypto.randomUUID(),
+        questionAnswers: answers,
       });
       setConfirmation({
         startsAtIso: res.startsAtIso,
@@ -498,6 +523,59 @@ export function BookingWidget(props: BookingWidgetProps) {
               <label className="mb-1.5 block text-sm font-medium text-slate-700">Notes <span className="font-normal text-slate-400">(optional)</span></label>
               <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Anything the host should know?" className={inputCls} />
             </div>
+            {questions.map((q) => (
+              <div key={q.id}>
+                <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                  {q.label} {q.is_required ? "*" : <span className="font-normal text-slate-400">(optional)</span>}
+                </label>
+                {q.field_type === "textarea" ? (
+                  <textarea
+                    rows={3}
+                    required={q.is_required}
+                    value={answers[q.id] ?? ""}
+                    onChange={(e) => setAnswers((a) => ({ ...a, [q.id]: e.target.value }))}
+                    className={inputCls}
+                  />
+                ) : q.field_type === "select" ? (
+                  <select
+                    required={q.is_required}
+                    value={answers[q.id] ?? ""}
+                    onChange={(e) => setAnswers((a) => ({ ...a, [q.id]: e.target.value }))}
+                    className={inputCls}
+                  >
+                    <option value="">— Select —</option>
+                    {q.options.map((o) => (
+                      <option key={o} value={o}>{o}</option>
+                    ))}
+                  </select>
+                ) : q.field_type === "radio" ? (
+                  <div className="space-y-2">
+                    {q.options.map((o) => (
+                      <label key={o} className="flex items-center gap-2.5 text-sm text-slate-700">
+                        <input
+                          type="radio"
+                          name={`q_${q.id}`}
+                          value={o}
+                          required={q.is_required}
+                          checked={answers[q.id] === o}
+                          onChange={() => setAnswers((a) => ({ ...a, [q.id]: o }))}
+                          className="accent-indigo-600"
+                        />
+                        {o}
+                      </label>
+                    ))}
+                  </div>
+                ) : (
+                  <input
+                    type={q.field_type === "phone" ? "tel" : "text"}
+                    required={q.is_required}
+                    value={answers[q.id] ?? ""}
+                    onChange={(e) => setAnswers((a) => ({ ...a, [q.id]: e.target.value }))}
+                    className={inputCls}
+                  />
+                )}
+              </div>
+            ))}
             {error && (
               <p className="rounded-lg bg-red-50 px-3.5 py-2.5 text-sm text-red-700">{error}</p>
             )}
@@ -649,7 +727,7 @@ export function BookingWidget(props: BookingWidgetProps) {
               <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
                 Available times
               </p>
-              <div className="grid max-h-56 grid-cols-3 gap-2 overflow-y-auto pr-1">
+              <div className="grid max-h-56 grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-3">
                 {slots.map((s) => (
                   <button
                     key={s}

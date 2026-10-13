@@ -3,6 +3,14 @@
 import { useState } from "react";
 import Link from "next/link";
 
+export interface EventQuestion {
+  id: string;
+  label: string;
+  field_type: string;
+  is_required: boolean;
+  options: string[];
+}
+
 export interface EventTypeValues {
   title: string;
   slug: string;
@@ -22,6 +30,7 @@ export interface EventTypeValues {
   organization_id: string;
   scheduling_mode: string;
   host_ids: string[];
+  questions: EventQuestion[];
 }
 
 export interface TeamMemberOption {
@@ -69,12 +78,34 @@ export function EventTypeForm({
   const [orgId, setOrgId] = useState(initial.organization_id);
   const [mode, setMode] = useState(initial.scheduling_mode || "single");
   const [hostIds, setHostIds] = useState<string[]>(initial.host_ids);
+  const [questions, setQuestions] = useState<EventQuestion[]>(initial.questions ?? []);
 
   const orgMembers = (teamMembers ?? []).filter((m) => m.orgId === orgId);
   const showHosts = mode !== "single" && orgId !== "";
 
   function toggleHost(id: string) {
     setHostIds((h) => (h.includes(id) ? h.filter((x) => x !== id) : [...h, id]));
+  }
+
+  function addQuestion() {
+    setQuestions((q) => [
+      ...q,
+      {
+        id: `q${Date.now()}`,
+        label: "",
+        field_type: "text",
+        is_required: false,
+        options: [],
+      },
+    ]);
+  }
+
+  function updateQuestion(id: string, patch: Partial<EventQuestion>) {
+    setQuestions((q) => q.map((x) => (x.id === id ? { ...x, ...patch } : x)));
+  }
+
+  function removeQuestion(id: string) {
+    setQuestions((q) => q.filter((x) => x.id !== id));
   }
 
   return (
@@ -184,6 +215,93 @@ export function EventTypeForm({
             </span>
           </label>
         </div>
+      </section>
+
+      {/* Questions */}
+      <section>
+        <h2 className="text-base font-semibold text-slate-900">
+          Booking questions
+        </h2>
+        <p className="mt-1 text-sm text-slate-500">
+          Ask guests for extra info at booking time.
+        </p>
+        <div className="mt-5 space-y-4">
+          {questions.map((q, i) => (
+            <div
+              key={q.id}
+              className="rounded-xl border border-slate-200 bg-slate-50/50 p-4"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Question {i + 1}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => removeQuestion(q.id)}
+                  className="text-xs font-medium text-red-600 hover:text-red-800"
+                >
+                  Remove
+                </button>
+              </div>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <input
+                  value={q.label}
+                  onChange={(e) => updateQuestion(q.id, { label: e.target.value })}
+                  placeholder="e.g. What is your company name?"
+                  className={inputCls}
+                />
+                <select
+                  value={q.field_type}
+                  onChange={(e) => updateQuestion(q.id, { field_type: e.target.value })}
+                  className={inputCls}
+                >
+                  <option value="text">Short text</option>
+                  <option value="textarea">Long text</option>
+                  <option value="select">Dropdown</option>
+                  <option value="radio">Multiple choice</option>
+                  <option value="phone">Phone number</option>
+                </select>
+              </div>
+              {(q.field_type === "select" || q.field_type === "radio") && (
+                <input
+                  value={q.options.join(", ")}
+                  onChange={(e) =>
+                    updateQuestion(q.id, {
+                      options: e.target.value.split(",").map((s) => s.trim()).filter(Boolean),
+                    })
+                  }
+                  placeholder="Options, separated by commas"
+                  className={`${inputCls} mt-3`}
+                />
+              )}
+              <label className="mt-3 flex items-center gap-2 text-sm text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={q.is_required}
+                  onChange={(e) => updateQuestion(q.id, { is_required: e.target.checked })}
+                  className="h-4 w-4 rounded accent-indigo-600"
+                />
+                Required
+              </label>
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={addQuestion}
+            className="rounded-xl border-2 border-dashed border-slate-300 px-4 py-3 text-sm font-medium text-slate-600 transition hover:border-indigo-400 hover:text-indigo-600"
+          >
+            + Add question
+          </button>
+        </div>
+        <input
+          type="hidden"
+          name="questions"
+          value={JSON.stringify(
+            questions
+              .filter((q) => q.label.trim())
+              .map((q, i) => ({ ...q, label: q.label.trim(), position: i }))
+          )}
+        />
       </section>
 
       {/* Timing */}

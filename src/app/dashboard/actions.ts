@@ -118,8 +118,47 @@ export async function createEventType(formData: FormData) {
 
   await syncEventHosts(supabase, created.id as string, organizationId, schedulingMode, hostIds);
 
+  const questions: {
+    label: string;
+    field_type: string;
+    is_required: boolean;
+    options: string[];
+    position: number;
+  }[] = JSON.parse(String(formData.get("questions") ?? "[]"));
+  await syncEventQuestions(supabase, created.id as string, questions);
+
   revalidatePath("/dashboard/event-types");
   redirect("/dashboard/event-types");
+}
+
+/** Replace the question set for an event type. */
+async function syncEventQuestions(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  eventTypeId: string,
+  questions: {
+    label: string;
+    field_type: string;
+    is_required: boolean;
+    options: string[];
+    position: number;
+  }[]
+) {
+  await supabase.from("event_type_questions").delete().eq("event_type_id", eventTypeId);
+  const validTypes = ["text", "textarea", "select", "radio", "phone"];
+  const rows = questions
+    .filter((q) => q.label.trim() && validTypes.includes(q.field_type))
+    .map((q, i) => ({
+      event_type_id: eventTypeId,
+      label: q.label.trim().slice(0, 300),
+      field_type: q.field_type,
+      is_required: !!q.is_required,
+      options: (q.options ?? []).slice(0, 20).map((o) => String(o).slice(0, 200)),
+      position: i,
+    }));
+  if (rows.length) {
+    const { error } = await supabase.from("event_type_questions").insert(rows);
+    if (error) throw new Error(error.message);
+  }
 }
 
 /** Replace the host roster for an event type (validated against org membership). */
@@ -207,6 +246,15 @@ export async function updateEventType(id: string, formData: FormData) {
   }
 
   await syncEventHosts(supabase, id, organizationId, schedulingMode, hostIds);
+
+  const questions: {
+    label: string;
+    field_type: string;
+    is_required: boolean;
+    options: string[];
+    position: number;
+  }[] = JSON.parse(String(formData.get("questions") ?? "[]"));
+  await syncEventQuestions(supabase, id, questions);
 
   revalidatePath("/dashboard/event-types");
   redirect("/dashboard/event-types");

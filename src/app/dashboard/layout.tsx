@@ -139,10 +139,10 @@ export default async function DashboardLayout({
         <header className="flex h-16 items-center justify-between border-b border-slate-200 bg-white px-4 md:hidden">
           <Logo />
           <Link
-            href="/dashboard/event-types"
+            href="/dashboard/bookings/new"
             className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white"
           >
-            Menu
+            + New booking
           </Link>
         </header>
         {/* Mobile nav */}

@@ -31,6 +31,12 @@ export default async function EditEventTypePage({
     .eq("event_type_id", id)
     .order("position");
 
+  const { data: questionRows } = await supabase
+    .from("event_type_questions")
+    .select("id, label, field_type, is_required, options")
+    .eq("event_type_id", id)
+    .order("position");
+
   const initial: EventTypeValues = {
     title: et.title,
     slug: et.slug,
@@ -47,6 +53,13 @@ export default async function EditEventTypePage({
     color: et.color,
     is_active: et.is_active,
     is_private: (et.is_private as boolean) ?? false,
+    questions: (questionRows ?? []).map((q) => ({
+      id: q.id as string,
+      label: q.label as string,
+      field_type: q.field_type as string,
+      is_required: q.is_required as boolean,
+      options: (q.options ?? []) as string[],
+    })),
     organization_id: (et.organization_id as string | null) ?? "",
     scheduling_mode: (et.scheduling_mode as string) ?? "single",
     host_ids: (hostRows ?? []).map((h) => h.profile_id as string),
