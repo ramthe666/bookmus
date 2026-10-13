@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { isEmailConfigured } from "@/lib/integrations/email";
 import { isPaymentsConfigured } from "@/lib/integrations/payments";
@@ -120,12 +119,12 @@ export default async function IntegrationsPage({
             {google ? (
               <DisconnectButton id={google.id} provider="Google" />
             ) : calCfg.google ? (
-              <Link
+              <a
                 href="/api/integrations/google/connect"
                 className="inline-block rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
               >
                 Connect Google
-              </Link>
+              </a>
             ) : (
               <p className="text-xs text-slate-400">Set GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET in env.</p>
             )}
@@ -144,12 +143,12 @@ export default async function IntegrationsPage({
             {zoho ? (
               <DisconnectButton id={zoho.id} provider="Zoho" />
             ) : calCfg.zoho ? (
-              <Link
+              <a
                 href="/api/integrations/zoho/connect"
                 className="inline-block rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
               >
                 Connect Zoho
-              </Link>
+              </a>
             ) : (
               <p className="text-xs text-slate-400">Set ZOHO_CLIENT_ID / ZOHO_CLIENT_SECRET in env.</p>
             )}

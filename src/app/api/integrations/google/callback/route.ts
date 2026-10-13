@@ -48,7 +48,16 @@ export async function GET(request: Request) {
       /* non-fatal */
     }
 
-    const { error } = await supabase.from("connected_calendars").upsert(
+    // Delete-then-insert: the unique constraint includes nullable
+    // organization_id, so upsert(onConflict) cannot match on reconnect.
+    await supabase
+      .from("connected_calendars")
+      .delete()
+      .eq("owner_profile_id", user.id)
+      .eq("provider", "google")
+      .is("organization_id", null);
+
+    const { error } = await supabase.from("connected_calendars").insert(
       {
         owner_profile_id: user.id,
         organization_id: null,
@@ -61,8 +70,7 @@ export async function GET(request: Request) {
         expires_at: tokens.expiresAt.toISOString(),
         scopes: ["calendar.events"],
         is_primary: true,
-      },
-      { onConflict: "owner_profile_id,organization_id,provider,provider_account_email" }
+      }
     );
     if (error) throw error;
 
