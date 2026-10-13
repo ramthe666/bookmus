@@ -10,9 +10,10 @@ import {
   queueCancellationEmail,
   queueRescheduledEmail,
   queueCalendarSyncUpdate,
+  queueConfirmSequence,
 } from "@/lib/booking-lifecycle";
 import { triggerWebhooks } from "@/lib/webhooks";
-import { validateSlotAvailable } from "@/app/u/actions";
+import { pickRoundRobinHost, validateSlotAvailable } from "@/app/u/actions";
 
 async function requireUser() {
   const supabase = await createClient();
@@ -426,4 +427,183 @@ export async function updateProfile(formData: FormData) {
 
   revalidatePath("/dashboard");
   revalidatePath("/dashboard/settings");
+}
+
+/* ── Manual staff booking (spec §7.4) ─────────────────────────────────── */
+
+/**
+ * A host (or team member) creates a booking directly for a guest.
+ * - Inserts as `confirmed` immediately — staff bookings never hold payment.
+ * - Availability/busy-block rules may be overridden with a written reason,
+ *   which is recorded in the audit trail. An actual double-book (overlapping
+ *   a live confirmed/pending booking of the same event type) can NEVER be
+ *   overridden — the `bookings_no_overlap` exclusion constraint rejects it.
+ * - Same durable confirm sequence as guest bookings: calendar sync first,
+ *   then the confirmation email.
+ */
+export async function createManualBooking(input: {
+  eventTypeId: string;
+  startsAtIso: string;
+  name: string;
+  email: string;
+  phone?: string;
+  notes?: string;
+  overrideReason?: string;
+}): Promise<{ bookingId: string }> {
+  const { supabase, user } = await requireUser();
+
+  const name = input.name.trim();
+  const email = input.email.trim().toLowerCase();
+  if (!input.eventTypeId) throw new Error("Choose an event type.");
+  if (!name || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new Error("Provide the guest's name and a valid email.");
+  }
+  const startsAt = new Date(input.startsAtIso);
+  if (isNaN(startsAt.getTime())) throw new Error("Pick a valid time.");
+  if (startsAt.getTime() <= Date.now()) {
+    throw new Error("The booking must be in the future.");
+  }
+
+  // Authorization: caller must manage this event type — owner, or member of
+  // its organization. Mirrors public.can_manage_event_type; RLS policies are
+  // untouched (insert still passes RLS, and the booking select/update
+  // policies keep applying afterwards).
+  const { data: et } = await supabase
+    .from("event_types")
+    .select(
+      "id, title, duration_minutes, owner_profile_id, organization_id"
+    )
+    .eq("id", input.eventTypeId)
+    .maybeSingle();
+  if (!et) throw new Error("Event type not found.");
+  const isOwner = (et.owner_profile_id as string) === user.id;
+  let isOrgMember = false;
+  if (!isOwner && et.organization_id) {
+    const { data: m } = await supabase
+      .from("organization_members")
+      .select("profile_id")
+      .eq("organization_id", et.organization_id as string)
+      .eq("profile_id", user.id)
+      .maybeSingle();
+    isOrgMember = !!m;
+  }
+  if (!isOwner && !isOrgMember) {
+    throw new Error("You don't have access to this event type.");
+  }
+
+  // Live availability check. Failing it requires an explicit override reason;
+  // before honouring the override, re-check for a real overlapping booking.
+  let durationMin = Number(et.duration_minutes);
+  let overridden = false;
+  let liveTz: string | null = null;
+  let meetingProvider: string | null = null;
+  try {
+    const ctx = await validateSlotAvailable(
+      input.eventTypeId,
+      startsAt.toISOString()
+    );
+    durationMin = ctx.duration_minutes;
+    liveTz = ctx.hostTimezone;
+    meetingProvider = ctx.meeting_provider;
+  } catch {
+    const reason = (input.overrideReason ?? "").trim();
+    if (!reason) {
+      throw new Error(
+        "That time isn't bookable — add an override reason to book it anyway."
+      );
+    }
+    const endsAt = new Date(startsAt.getTime() + durationMin * 60000);
+    const { data: clash } = await supabase
+      .from("bookings")
+      .select("id")
+      .eq("event_type_id", input.eventTypeId)
+      .in("status", ["confirmed", "pending"])
+      .lt("starts_at", endsAt.toISOString())
+      .gt("ends_at", startsAt.toISOString())
+      .limit(1);
+    if (clash && clash.length > 0) {
+      throw new Error(
+        "That time is already booked — overrides can't double-book."
+      );
+    }
+    overridden = true;
+  }
+  const endsAt = new Date(startsAt.getTime() + durationMin * 60000);
+
+  // Host assignment mirrors the guest flow (spec §5): fair pick for
+  // round-robin on live slots; an overridden slot belongs to the staffer.
+  let assignedProfileId: string | null = null;
+  if (!overridden) {
+    const ctx = await validateSlotAvailable(
+      input.eventTypeId,
+      startsAt.toISOString()
+    );
+    if (ctx.schedulingMode === "round_robin") {
+      assignedProfileId =
+        (await pickRoundRobinHost(ctx, startsAt.toISOString())) ?? user.id;
+    } else if (ctx.schedulingMode === "single") {
+      assignedProfileId = ctx.ownerProfileId;
+    }
+    // collective → null (all hosts)
+  } else {
+    assignedProfileId = user.id;
+  }
+
+  const { data, error } = await supabase
+    .from("bookings")
+    .insert({
+      event_type_id: input.eventTypeId,
+      starts_at: startsAt.toISOString(),
+      ends_at: endsAt.toISOString(),
+      timezone: liveTz,
+      status: "confirmed",
+      assigned_profile_id: assignedProfileId,
+      booker_name: name,
+      booker_email: email,
+      booker_phone: input.phone?.trim() || null,
+      booker_notes: input.notes?.trim() || null,
+      meeting_provider: meetingProvider,
+      idempotency_key: crypto.randomUUID(),
+    })
+    .select("id")
+    .single();
+  if (error) {
+    if (error.code === "23P01") {
+      throw new Error("That time was just taken — please pick another slot.");
+    }
+    throw new Error("Could not create the booking. Please try again.");
+  }
+
+  await logAudit(supabase, {
+    action: "booking.created_manual",
+    targetType: "booking",
+    targetId: data.id as string,
+    ownerProfileId: user.id,
+    actorProfileId: user.id,
+    actorType: "user",
+    metadata: {
+      via: "dashboard",
+      manual: true,
+      availability_overridden: overridden,
+      override_reason: overridden ? (input.overrideReason ?? "").trim() : null,
+      event_type_id: input.eventTypeId,
+      starts_at: startsAt.toISOString(),
+      booker_email: email,
+    },
+  });
+
+  // Durable confirm sequence: calendar sync first (Meet link), then email.
+  await queueConfirmSequence(supabase, data.id as string);
+  await triggerWebhooks(supabase, user.id, "booking.created", {
+    booking_id: data.id,
+    event_type_id: input.eventTypeId,
+    starts_at: startsAt.toISOString(),
+    booker_email: email,
+    status: "confirmed",
+    manual: true,
+  });
+
+  revalidatePath("/dashboard/bookings");
+  revalidatePath("/dashboard/calendar");
+  return { bookingId: data.id as string };
 }

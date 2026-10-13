@@ -328,7 +328,7 @@ async function getMergedSlotsForDate(
  * one with the fewest confirmed bookings in the last 30 days (fair
  * distribution). Ties break by host position.
  */
-async function pickRoundRobinHost(
+export async function pickRoundRobinHost(
   ctx: SlotContext,
   startsAtIso: string
 ): Promise<string | null> {

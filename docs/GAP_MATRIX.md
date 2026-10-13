@@ -26,7 +26,7 @@ No existing migrations were modified; all proposed schema work is additive.
 | Public booking page | ✅ | `src/app/u/[username]/[slug]` |
 | Booking lifecycle states | ⚠️ | Only `confirmed`/`cancelled` exercised; `pending`, `reschedule_pending`, `expired`, `completed`, `no-show` not in flow |
 | Paid booking: pending hold → confirm on verified payment | ✅ | `20261013150000_booking_lifecycle.sql` adds `pending`/`expired` states; `createBooking` holds 30 min, `finalizePaidBooking` confirms on verified checkout/webhook; cron expires stale holds |
-| Internal calendar (day/week/month/agenda) | ⚠️ | Week view live (`/dashboard/calendar`): BookFlow bookings + external busy blocks, sync-status dots, week nav (2026-10-13). Day/month/agenda views not yet built |
+| Internal calendar (day/week/month/agenda) | ✅ | `/dashboard/calendar` with Day/Week/Month/Agenda tabs: timeline columns for day & week, month grid (click-through to day), agenda list for next 60 days — all with BookFlow bookings + external busy blocks, sync-status dots (2026-10-13) |
 | Google/Zoho busy-time → availability | ✅ | `getHostBusyBlocks` merges Google freebusy + Zoho events into the slot engine; provider outage degrades gracefully (2026-10-13) |
 | Time zones (UTC instants + IANA, per-viewer render) | ✅ | Slot engine builds in host TZ, stores UTC; `Intl.DateTimeFormat` render |
 | Email confirmations / reminders | ✅ | `src/lib/email.ts`, `/api/cron/reminders`, `notification_log` |
@@ -46,7 +46,7 @@ No existing migrations were modified; all proposed schema work is additive.
 | Reschedule flow (policy + availability recheck) | ❌ | No reschedule API or UI |
 | Customer portal / manage booking | ❌ | — |
 | Rebook flow | ❌ | — |
-| Manual booking by staff (conflict override w/ audit) | ❌ | — |
+| Manual booking by staff (conflict override w/ audit) | ✅ | `/dashboard/bookings/new`: host books directly for a guest (confirmed immediately, same calendar-sync→email confirm sequence). Availability/busy-block override needs a written reason, recorded in `audit_events` (`booking.created_manual`); real double-books can never be overridden (`bookings_no_overlap` exclusion constraint) (2026-10-13) |
 | Email template editor (versioned) | ✅ | `email_templates` table + studio (`/dashboard/settings/templates`): merge fields, live preview, version history, rollback; worker prefers custom template, falls back to built-in (2026-10-13) |
 | Booking-page builder (theme/sections/publish) | ✅ | `booking_pages` + `booking_page_versions` (migration `20261013220000`); builder at `/dashboard/page-builder` with live preview, accent color, dark theme, event reorder/hide, publish + version history + rollback; public page renders published config only (draft never exposed) (2026-10-13) |
 | CRM (contacts, consent, sync) | ⚠️ | Customer directory + detail + private notes live (`/dashboard/customers`, `customer_notes` table, 2026-10-13); provider sync not started |
@@ -92,7 +92,7 @@ Per spec §15.1 (small vertical slices, additive migrations only):
 7. ✅ **Outbox** (2026-10-13)
 8. ✅ **Busy-time integration** (2026-10-13)
 9. ✅ **Internal calendar week view** + sync-health indicators (2026-10-13)
-10. ✅ Page builder, ✅ template editor, ✅ CRM basics, ✅ reports, ✅ teams/roles phase 1, ✅ round-robin/collective scheduling (2026-10-13). Remaining: manual staff booking, day/month/agenda calendar views
+10. ✅ Page builder, ✅ template editor, ✅ CRM basics, ✅ reports, ✅ teams/roles phase 1, ✅ round-robin/collective scheduling, ✅ manual staff booking, ✅ day/month/agenda calendar views (2026-10-13)
 
 Each slice ships with: UI states (loading/empty/error), server enforcement, and a
 manual end-to-end check on the Vercel deployment before the next slice starts.

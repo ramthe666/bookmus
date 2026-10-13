@@ -50,6 +50,7 @@ export async function logAudit(
 /** Friendly labels for the dashboard activity feed. */
 export function auditActionLabel(action: string): string {
   const labels: Record<string, string> = {
+    "booking.created_manual": "Manual booking created",
     "booking.created": "Booking created",
     "booking.confirmed": "Booking confirmed",
     "booking.cancelled": "Booking cancelled",

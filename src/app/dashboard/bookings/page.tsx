@@ -67,12 +67,22 @@ export default async function BookingsPage() {
 
   return (
     <div className="mx-auto max-w-5xl">
-      <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-        Bookings
-      </h1>
-      <p className="mt-1 text-sm text-slate-500">
-        Everyone who booked time with you.
-      </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+            Bookings
+          </h1>
+          <p className="mt-1 text-sm text-slate-500">
+            Everyone who booked time with you.
+          </p>
+        </div>
+        <Link
+          href="/dashboard/bookings/new"
+          className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700"
+        >
+          + New booking
+        </Link>
+      </div>
 
       <div className="mt-8 overflow-hidden rounded-2xl border border-slate-200 bg-white">
         {(bookings ?? []).length === 0 ? (
