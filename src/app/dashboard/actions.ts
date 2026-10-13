@@ -677,7 +677,7 @@ export async function createManualBooking(input: {
     booker_name: input.name.trim(),
     booker_email: email,
     starts_at: startsAt.toISOString(),
-    ends_at: new Date(startsAt.getTime() + 30 * 60000).toISOString(),
+    ends_at: endsAt.toISOString(),
   });
 
   revalidatePath("/dashboard/bookings");
