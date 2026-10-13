@@ -156,7 +156,9 @@ export function BookingWidget(props: BookingWidgetProps) {
   const [confirmation, setConfirmation] = useState<{
     startsAtIso: string;
     endsAtIso: string;
+    cancelToken: string;
   } | null>(null);
+  const [copied, setCopied] = useState(false);
   const [paymentInfo, setPaymentInfo] = useState<
     NonNullable<BookingResult["payment"]> | null
   >(null);
@@ -284,6 +286,7 @@ export function BookingWidget(props: BookingWidgetProps) {
       setConfirmation({
         startsAtIso: res.startsAtIso,
         endsAtIso: res.endsAtIso,
+        cancelToken: res.cancelToken,
       });
       if (res.payment) {
         setPaymentInfo(res.payment);
@@ -322,7 +325,8 @@ export function BookingWidget(props: BookingWidgetProps) {
           Almost there — complete payment
         </h2>
         <p className="mt-2 text-sm text-slate-500">
-          Your slot is held. Pay securely via Razorpay to confirm.
+          Your slot is held for 30 minutes. Pay securely via Razorpay to
+          confirm — unpaid holds are released automatically.
         </p>
         <div className="mt-6 rounded-2xl bg-slate-50 p-5 text-left">
           <p className="font-semibold text-slate-900">{title}</p>
@@ -376,6 +380,31 @@ export function BookingWidget(props: BookingWidgetProps) {
           <p className="mt-1 text-xs text-slate-400">
             Shown in your timezone ({guestTz}) · Host timezone: {hostTimezone}
           </p>
+        </div>
+        <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-left">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Manage this booking
+          </p>
+          <p className="mt-1 text-xs text-slate-500">
+            Save this private link — you can cancel without an account:
+          </p>
+          <div className="mt-2 flex items-center gap-2">
+            <code className="min-w-0 flex-1 truncate rounded-lg bg-white px-3 py-2 text-xs text-indigo-700 ring-1 ring-slate-200">
+              {`${process.env.NEXT_PUBLIC_APP_URL}/b/cancel/${confirmation.cancelToken}`}
+            </code>
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText(
+                  `${process.env.NEXT_PUBLIC_APP_URL}/b/cancel/${confirmation.cancelToken}`
+                );
+                setCopied(true);
+                setTimeout(() => setCopied(false), 2000);
+              }}
+              className="shrink-0 rounded-lg bg-white px-3 py-2 text-xs font-semibold text-slate-700 ring-1 ring-slate-200 hover:bg-slate-100"
+            >
+              {copied ? "Copied ✓" : "Copy"}
+            </button>
+          </div>
         </div>
         <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-center">
           <button

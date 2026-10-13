@@ -5,11 +5,13 @@ import {
   bookingReminderEmail,
   isEmailConfigured,
 } from "@/lib/integrations/email";
+import { expireStaleHolds } from "@/lib/booking-lifecycle";
 
 /**
- * Hourly reminder sweep (Vercel Cron → /api/cron/reminders).
- * Sends a reminder for confirmed bookings starting in ~24h that
- * haven't been reminded yet. Guarded by CRON_SECRET.
+ * Reminder + lifecycle sweep (Vercel Cron / cron-job.org → /api/cron/reminders).
+ * 1. Expires stale payment holds (pending > 30 min) so their slots release.
+ * 2. Sends a reminder for confirmed bookings starting in ~24h that
+ *    haven't been reminded yet. Guarded by CRON_SECRET.
  */
 export const dynamic = "force-dynamic";
 
@@ -23,6 +25,10 @@ export async function GET(request: Request) {
   }
 
   const supabase = await createServiceClient();
+
+  // Release slots held by abandoned payment attempts.
+  const expired = await expireStaleHolds(supabase);
+
   const now = new Date();
   const from = new Date(now.getTime() + 23 * 3600_000).toISOString();
   const to = new Date(now.getTime() + 25 * 3600_000).toISOString();
@@ -92,5 +98,9 @@ export async function GET(request: Request) {
     }
   }
 
-  return NextResponse.json({ sent, checked: (bookings ?? []).length });
+  return NextResponse.json({
+    sent,
+    checked: (bookings ?? []).length,
+    expired,
+  });
 }

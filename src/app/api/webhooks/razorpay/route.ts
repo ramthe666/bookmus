@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { verifyWebhookSignature } from "@/lib/integrations/payments";
 import { createServiceClient } from "@/lib/supabase/server";
+import { finalizePaidBooking } from "@/lib/booking-lifecycle";
 
 /**
  * Razorpay webhook — signature-verified, idempotent.
@@ -30,15 +31,24 @@ export async function POST(request: Request) {
     const entity = event.payload?.payment?.entity;
 
     if (event.event === "payment.captured" && entity) {
-      await supabase
+      const { data: payment } = await supabase
         .from("payments")
-        .update({
-          status: "captured",
-          provider_payment_id: entity.id,
-          raw_webhook: event,
-        })
+        .select("id, booking_id")
         .eq("provider_order_id", entity.order_id)
-        .eq("status", "pending");
+        .maybeSingle();
+      if (payment) {
+        await supabase
+          .from("payments")
+          .update({
+            status: "captured",
+            provider_payment_id: entity.id,
+            raw_webhook: event,
+          })
+          .eq("id", payment.id)
+          .eq("status", "pending");
+        // Confirm the booking (idempotent — no-op if already confirmed).
+        await finalizePaidBooking(supabase, payment.booking_id as string);
+      }
     } else if (event.event === "payment.failed" && entity) {
       await supabase
         .from("payments")

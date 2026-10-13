@@ -25,7 +25,7 @@ No existing migrations were modified; all proposed schema work is additive.
 | Availability overrides/breaks/leave | ⚠️ | `schedule_overrides` table exists; no UI, not read by slot engine |
 | Public booking page | ✅ | `src/app/u/[username]/[slug]` |
 | Booking lifecycle states | ⚠️ | Only `confirmed`/`cancelled` exercised; `pending`, `reschedule_pending`, `expired`, `completed`, `no-show` not in flow |
-| Paid booking: pending hold → confirm on verified payment | 🔴 | Paid bookings are inserted as `confirmed` immediately; spec §7.1/§8.5 requires a pending hold until gateway verification |
+| Paid booking: pending hold → confirm on verified payment | ✅ | `20261013150000_booking_lifecycle.sql` adds `pending`/`expired` states; `createBooking` holds 30 min, `finalizePaidBooking` confirms on verified checkout/webhook; cron expires stale holds |
 | Internal calendar (day/week/month/agenda) | ❌ | Dashboard has booking list only (`src/app/dashboard/bookings`) |
 | Google/Zoho busy-time → availability | ❌ | OAuth connects; busy blocks never pulled, availability ignores them |
 | Time zones (UTC instants + IANA, per-viewer render) | ✅ | Slot engine builds in host TZ, stores UTC; `Intl.DateTimeFormat` render |
@@ -40,7 +40,8 @@ No existing migrations were modified; all proposed schema work is additive.
 
 | Requirement | Status | Evidence / notes |
 |---|---|---|
-| Guest self-cancel/reschedule via token link | ❌ | `cancel_token`/`reschedule_token` columns exist but are **never used** |
+| Guest self-cancel via token link | ✅ | `/b/cancel/[token]` page + `cancelBookingByToken` action; manage link on confirmation screen, in confirmation email, and copy button on dashboard (2026-10-13) |
+| Guest self-reschedule via token link | ❌ | `reschedule_token` column still unused |
 | Reschedule flow (policy + availability recheck) | ❌ | No reschedule API or UI |
 | Customer portal / manage booking | ❌ | — |
 | Rebook flow | ❌ | — |
@@ -77,9 +78,9 @@ advanced routing forms — all ❌ Missing, intentionally deferred per spec.
 
 Per spec §15.1 (small vertical slices, additive migrations only):
 
-1. ✅ OAuth connect fix (this release): anchor navigation, idempotent reconnect
-2. **Guest self-cancel via token** — code-only, uses existing columns, no API keys
-3. **Paid lifecycle fix**: `pending` → `confirmed` on verified payment/webhook
+1. ✅ OAuth connect fix: anchor navigation, idempotent reconnect
+2. ✅ Guest self-cancel via token (2026-10-13)
+3. ✅ Paid lifecycle fix: `pending` → `confirmed` on verified payment/webhook (2026-10-13)
 4. **Audit trail**: new `audit_events` migration + logging on booking/payment/role/integration actions
 5. **Reschedule via token** (guest) + host reschedule with availability recheck
 6. **No-double-book**: exclusion-constraint migration + concurrency test

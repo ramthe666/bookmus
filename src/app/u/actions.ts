@@ -8,16 +8,15 @@ import {
   type ScheduleOverride,
 } from "@/lib/scheduling";
 import {
-  sendEmail,
-  bookingConfirmationEmail,
-  isEmailConfigured,
-} from "@/lib/integrations/email";
-import {
   createRazorpayOrder,
   isPaymentsConfigured,
   verifyPaymentSignature,
 } from "@/lib/integrations/payments";
 import { createServiceClient } from "@/lib/supabase/server";
+import {
+  finalizePaidBooking,
+  sendConfirmationForBooking,
+} from "@/lib/booking-lifecycle";
 
 interface SlotContext {
   id: string;
@@ -183,6 +182,10 @@ export interface CreateBookingInput {
 export interface BookingResult {
   startsAtIso: string;
   endsAtIso: string;
+  /** "pending" = 30-min payment hold; "confirmed" = no payment required. */
+  status: "pending" | "confirmed";
+  /** Unguessable guest self-service token for /b/cancel/[token]. */
+  cancelToken: string;
   payment?: {
     orderId: string;
     keyId: string;
@@ -231,6 +234,11 @@ export async function createBooking(
   const startsAt = new Date(wanted);
   const endsAt = new Date(startsAt.getTime() + ctx.duration_minutes * 60000);
 
+  // Paid events start as a pending hold; they confirm only after verified
+  // payment (spec §7.1). Free events — or paid events while Razorpay is not
+  // configured (host follows up manually) — confirm immediately.
+  const needsPayment = ctx.price_paise > 0 && isPaymentsConfigured();
+
   const { data, error } = await supabase
     .from("bookings")
     .insert({
@@ -238,6 +246,7 @@ export async function createBooking(
       starts_at: startsAt.toISOString(),
       ends_at: endsAt.toISOString(),
       timezone: ctx.hostTimezone,
+      status: needsPayment ? "pending" : "confirmed",
       booker_name: name,
       booker_email: email,
       booker_phone: input.phone?.trim() || null,
@@ -246,7 +255,7 @@ export async function createBooking(
       meeting_provider: ctx.meeting_provider,
       idempotency_key: input.idempotencyKey,
     })
-    .select("id")
+    .select("id, cancel_token")
     .single();
 
   if (error) {
@@ -261,9 +270,11 @@ export async function createBooking(
   const result: BookingResult = {
     startsAtIso: startsAt.toISOString(),
     endsAtIso: endsAt.toISOString(),
+    status: needsPayment ? "pending" : "confirmed",
+    cancelToken: data.cancel_token as string,
   };
 
-  if (ctx.price_paise > 0) {
+  if (needsPayment) {
     let providerOrderId: string | null = null;
     if (isPaymentsConfigured()) {
       try {
@@ -297,57 +308,10 @@ export async function createBooking(
     });
   }
 
-  // Confirmation email — never fails the booking.
-  try {
-    if (isEmailConfigured()) {
-      const { data: meta } = await supabase
-        .from("event_types")
-        .select("title, owner_profile_id")
-        .eq("id", ctx.id)
-        .maybeSingle();
-      const title = meta?.title ?? "Booking";
-      let hostName = "your host";
-      if (meta?.owner_profile_id) {
-        const { data: host } = await supabase
-          .from("profiles")
-          .select("display_name")
-          .eq("id", meta.owner_profile_id)
-          .maybeSingle();
-        if (host?.display_name) hostName = host.display_name;
-      }
-      const whenText = new Intl.DateTimeFormat("en-IN", {
-        timeZone: input.bookerTimezone,
-        weekday: "long",
-        day: "numeric",
-        month: "long",
-        hour: "numeric",
-        minute: "2-digit",
-        hour12: true,
-      }).format(startsAt);
-      const mail = bookingConfirmationEmail({
-        hostName,
-        eventTitle: title,
-        whenText,
-        bookerName: name,
-      });
-      const sent = await sendEmail({
-        to: email,
-        subject: mail.subject,
-        html: mail.html,
-      });
-      await supabase.rpc("log_notification", {
-        p_booking_id: data.id,
-        p_channel: "email",
-        p_template: "booking_confirmation",
-        p_recipient: email,
-        p_provider: "resend",
-        p_provider_id: sent.providerId ?? null,
-        p_status: sent.ok ? "sent" : "failed",
-        p_error: sent.error ?? null,
-      });
-    }
-  } catch (e) {
-    console.error("Confirmation email failed:", e);
+  // Confirmation email goes out immediately only for free events.
+  // Paid events get it when payment is verified (finalizePaidBooking).
+  if (!needsPayment) {
+    await sendConfirmationForBooking(supabase, data.id);
   }
 
   return result;
@@ -355,8 +319,9 @@ export async function createBooking(
 
 /**
  * Called by the browser after Razorpay Checkout succeeds.
- * The cryptographic signature proves the payment happened; only then
- * do we mark the payment captured (service role, never trust the client).
+ * The cryptographic signature proves the payment happened; only then do we
+ * mark the payment captured AND flip the booking pending → confirmed
+ * (service role, never trust the client). Idempotent.
  */
 export async function confirmRazorpayPayment(input: {
   orderId: string;
@@ -373,11 +338,41 @@ export async function confirmRazorpayPayment(input: {
     throw new Error("Payment verification failed. Contact the host.");
   }
   const supabase = await createServiceClient();
+
+  const { data: payment } = await supabase
+    .from("payments")
+    .select("id, booking_id, status")
+    .eq("provider_order_id", input.orderId)
+    .maybeSingle();
+  if (!payment) throw new Error("Payment record not found. Contact the host.");
+  if (payment.status === "captured") {
+    // Idempotent retry — make sure the booking followed.
+    await finalizePaidBooking(supabase, payment.booking_id as string);
+    return { ok: true };
+  }
+
   const { error } = await supabase
     .from("payments")
     .update({ status: "captured", provider_payment_id: input.paymentId })
-    .eq("provider_order_id", input.orderId)
+    .eq("id", payment.id)
     .eq("status", "pending");
   if (error) throw new Error("Could not record the payment.");
+
+  const transitioned = await finalizePaidBooking(
+    supabase,
+    payment.booking_id as string
+  );
+  if (!transitioned) {
+    const { data: b } = await supabase
+      .from("bookings")
+      .select("status")
+      .eq("id", payment.booking_id)
+      .maybeSingle();
+    if (b?.status === "expired") {
+      throw new Error(
+        "Your 30-minute payment hold expired before the payment completed. Please book again — you were not charged for the hold."
+      );
+    }
+  }
   return { ok: true };
 }

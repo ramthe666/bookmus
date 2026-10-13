@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { cancelBooking } from "../actions";
+import { CopyLinkButton } from "./copy-link-button";
 
 function formatInTz(iso: string, timeZone: string) {
   return new Intl.DateTimeFormat("en-IN", {
@@ -15,6 +16,8 @@ function formatInTz(iso: string, timeZone: string) {
 
 const statusStyles: Record<string, string> = {
   confirmed: "bg-emerald-50 text-emerald-700 ring-emerald-200",
+  pending: "bg-amber-50 text-amber-700 ring-amber-200",
+  expired: "bg-slate-100 text-slate-500 ring-slate-200",
   cancelled: "bg-slate-100 text-slate-500 ring-slate-200",
   rescheduled: "bg-amber-50 text-amber-700 ring-amber-200",
   no_show: "bg-red-50 text-red-700 ring-red-200",
@@ -56,7 +59,7 @@ export default async function BookingsPage() {
   const { data: bookings } = await supabase
     .from("bookings")
     .select(
-      "id, starts_at, ends_at, status, booker_name, booker_email, event_types!inner(title)"
+      "id, starts_at, ends_at, status, booker_name, booker_email, cancel_token, event_types!inner(title)"
     )
     .order("starts_at", { ascending: false })
     .limit(200);
@@ -102,9 +105,12 @@ export default async function BookingsPage() {
                   <p className="shrink-0 text-sm font-medium text-slate-700">
                     {formatInTz(b.starts_at, tz)}
                   </p>
-                  {b.status === "confirmed" &&
+                  {(b.status === "confirmed" || b.status === "pending") &&
                     new Date(b.starts_at).getTime() > Date.now() && (
-                      <CancelButton id={b.id} />
+                      <>
+                        <CopyLinkButton token={b.cancel_token as string} />
+                        <CancelButton id={b.id} />
+                      </>
                     )}
                 </li>
               );
