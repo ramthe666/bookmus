@@ -9,6 +9,7 @@ import {
   bookingCancellationEmail,
   isEmailConfigured,
 } from "@/lib/integrations/email";
+import { logAudit } from "@/lib/audit";
 
 async function requireUser() {
   const supabase = await createClient();
@@ -199,7 +200,18 @@ export async function cancelBooking(id: string) {
     .update({ status: "cancelled", cancelled_at: new Date().toISOString() })
     .eq("id", id);
   if (error) throw new Error(error.message);
-  void user;
+  await logAudit(supabase, {
+    action: "booking.cancelled",
+    targetType: "booking",
+    targetId: id,
+    ownerProfileId: user.id,
+    actorProfileId: user.id,
+    actorType: "user",
+    metadata: {
+      via: "dashboard",
+      booker_email: (booking?.booker_email as string | undefined) ?? null,
+    },
+  });
   revalidatePath("/dashboard/bookings");
   revalidatePath("/dashboard");
 

@@ -5,6 +5,7 @@ import {
   bookingCancellationEmail,
   isEmailConfigured,
 } from "@/lib/integrations/email";
+import { logAudit } from "@/lib/audit";
 
 /**
  * Shared booking-lifecycle transitions (spec §7).
@@ -32,6 +33,7 @@ interface MailContext {
   cancel_token: string;
   event_title: string;
   host_name: string;
+  owner_profile_id: string;
 }
 
 async function loadMailContext(
@@ -67,6 +69,7 @@ async function loadMailContext(
     cancel_token: b.cancel_token as string,
     event_title: et.title,
     host_name: hostName,
+    owner_profile_id: et.owner_profile_id,
   };
 }
 
@@ -184,7 +187,8 @@ export async function sendCancellationForBooking(
  */
 export async function finalizePaidBooking(
   supabase: SupabaseClient,
-  bookingId: string
+  bookingId: string,
+  opts?: { paymentId?: string | null }
 ): Promise<boolean> {
   const { data } = await supabase
     .from("bookings")
@@ -194,6 +198,22 @@ export async function finalizePaidBooking(
     .select("id")
     .maybeSingle();
   if (!data) return false;
+
+  const ctx = await loadMailContext(supabase, bookingId);
+  await logAudit(supabase, {
+    action: "booking.confirmed",
+    targetType: "booking",
+    targetId: bookingId,
+    ownerProfileId: ctx?.owner_profile_id ?? null,
+    actorType: "system",
+    actorLabel: "payment verification",
+    metadata: {
+      via: "verified_payment",
+      payment_id: opts?.paymentId ?? null,
+      booker_email: ctx?.booker_email ?? null,
+    },
+  });
+
   await sendConfirmationForBooking(supabase, bookingId);
   return true;
 }
@@ -205,15 +225,39 @@ export async function expireStaleHolds(
   const cutoff = new Date(
     Date.now() - PAYMENT_HOLD_MINUTES * 60_000
   ).toISOString();
-  const { data, error } = await supabase
+  const { data: stale, error } = await supabase
     .from("bookings")
-    .update({ status: "expired" })
+    .select("id, booker_email, event_types!inner(owner_profile_id)")
     .eq("status", "pending")
     .lt("created_at", cutoff)
-    .select("id");
+    .limit(500);
   if (error) {
     console.error("Hold expiry sweep failed:", error);
     return 0;
   }
-  return data?.length ?? 0;
+  if (!stale?.length) return 0;
+
+  const ids = stale.map((s) => s.id as string);
+  const { error: updateError } = await supabase
+    .from("bookings")
+    .update({ status: "expired" })
+    .in("id", ids)
+    .eq("status", "pending");
+  if (updateError) {
+    console.error("Hold expiry update failed:", updateError);
+    return 0;
+  }
+
+  for (const s of stale) {
+    const et = s.event_types as unknown as { owner_profile_id: string };
+    await logAudit(supabase, {
+      action: "booking.hold_expired",
+      targetType: "booking",
+      targetId: s.id as string,
+      ownerProfileId: et.owner_profile_id,
+      actorType: "system",
+      metadata: { booker_email: s.booker_email as string },
+    });
+  }
+  return stale.length;
 }

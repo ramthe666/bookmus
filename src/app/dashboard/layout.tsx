@@ -31,6 +31,11 @@ const nav = [
     d: "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71",
   },
   {
+    href: "/dashboard/activity",
+    label: "Activity",
+    d: "M3 12h4l3 8 4-16 3 8h4",
+  },
+  {
     href: "/dashboard/settings",
     label: "Settings",
     d: "M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6",

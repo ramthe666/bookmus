@@ -31,7 +31,7 @@ No existing migrations were modified; all proposed schema work is additive.
 | Time zones (UTC instants + IANA, per-viewer render) | ✅ | Slot engine builds in host TZ, stores UTC; `Intl.DateTimeFormat` render |
 | Email confirmations / reminders | ✅ | `src/lib/email.ts`, `/api/cron/reminders`, `notification_log` |
 | Payment verification (server-side, webhook) | ✅ | `src/app/api/razorpay/order`, `src/app/api/webhooks/razorpay` |
-| Audit trail | ❌ | No `audit_events` table; no actor/action logging |
+| Audit trail | ✅ | `20261013160000_audit_trail.sql`: append-only `audit_events` (RLS: owners read own, service-role writes, no update/delete); `src/lib/audit.ts`; wired into booking create/cancel/confirm, hold expiry, integration connect/disconnect; `/dashboard/activity` feed (2026-10-13) |
 | Tenant isolation (RLS) | ✅ | RLS on all tables, `auth.uid()`-scoped policies |
 | Rate limiting (public booking, auth, OTP) | ❌ | No rate limits on any public route |
 | OAuth token refresh before expiry | ❌ | Tokens encrypted at rest; no refresh worker |
@@ -81,7 +81,7 @@ Per spec §15.1 (small vertical slices, additive migrations only):
 1. ✅ OAuth connect fix: anchor navigation, idempotent reconnect
 2. ✅ Guest self-cancel via token (2026-10-13)
 3. ✅ Paid lifecycle fix: `pending` → `confirmed` on verified payment/webhook (2026-10-13)
-4. **Audit trail**: new `audit_events` migration + logging on booking/payment/role/integration actions
+4. ✅ **Audit trail** (2026-10-13)
 5. **Reschedule via token** (guest) + host reschedule with availability recheck
 6. **No-double-book**: exclusion-constraint migration + concurrency test
 7. **Outbox**: `outbox_events` + cron worker for email/calendar retries

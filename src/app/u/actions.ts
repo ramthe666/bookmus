@@ -17,6 +17,7 @@ import {
   finalizePaidBooking,
   sendConfirmationForBooking,
 } from "@/lib/booking-lifecycle";
+import { logAudit } from "@/lib/audit";
 
 interface SlotContext {
   id: string;
@@ -32,6 +33,7 @@ interface SlotContext {
   hostTimezone: string;
   weeklyHours: WeeklyHours;
   overrides: ScheduleOverride[];
+  ownerProfileId: string;
 }
 
 async function getSlotContext(eventTypeId: string): Promise<SlotContext | null> {
@@ -40,7 +42,7 @@ async function getSlotContext(eventTypeId: string): Promise<SlotContext | null> 
   const { data: et } = await supabase
     .from("event_types")
     .select(
-      "id, duration_minutes, buffer_before_minutes, buffer_after_minutes, min_notice_hours, max_ahead_days, max_bookings_per_day, price_paise, currency, meeting_provider, schedule_id"
+      "id, duration_minutes, buffer_before_minutes, buffer_after_minutes, min_notice_hours, max_ahead_days, max_bookings_per_day, price_paise, currency, meeting_provider, schedule_id, owner_profile_id"
     )
     .eq("id", eventTypeId)
     .eq("is_active", true)
@@ -87,6 +89,7 @@ async function getSlotContext(eventTypeId: string): Promise<SlotContext | null> 
     hostTimezone,
     weeklyHours,
     overrides,
+    ownerProfileId: et.owner_profile_id as string,
   };
 }
 
@@ -273,6 +276,20 @@ export async function createBooking(
     status: needsPayment ? "pending" : "confirmed",
     cancelToken: data.cancel_token as string,
   };
+
+  await logAudit(supabase, {
+    action: "booking.created",
+    targetType: "booking",
+    targetId: data.id as string,
+    ownerProfileId: ctx.ownerProfileId,
+    actorType: "guest",
+    actorLabel: email,
+    metadata: {
+      event_type_id: ctx.id,
+      starts_at: startsAt.toISOString(),
+      status: result.status,
+    },
+  });
 
   if (needsPayment) {
     let providerOrderId: string | null = null;

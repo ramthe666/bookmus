@@ -4,6 +4,7 @@ import {
   exchangeGoogleCode,
   encryptToken,
 } from "@/lib/integrations/calendar";
+import { logAudit } from "@/lib/audit";
 
 function appUrl(request: Request): string {
   return new URL(request.url).origin;
@@ -73,6 +74,16 @@ export async function GET(request: Request) {
       }
     );
     if (error) throw error;
+
+    await logAudit(supabase, {
+      action: "integration.connected",
+      targetType: "integration",
+      targetId: "google",
+      ownerProfileId: user.id,
+      actorProfileId: user.id,
+      actorType: "user",
+      metadata: { provider: "google", account_email: accountEmail },
+    });
 
     return NextResponse.redirect(
       `${origin}/dashboard/integrations?connected=google`
