@@ -5,6 +5,8 @@ import {
   getMonthAvailability,
   getSlotsForDate,
   createBooking,
+  confirmRazorpayPayment,
+  type BookingResult,
 } from "@/app/u/actions";
 import {
   toDateStrInTz,
@@ -28,7 +30,21 @@ export interface BookingWidgetProps {
   hostTimezone: string;
 }
 
-type Step = "schedule" | "details" | "done";
+type Step = "schedule" | "details" | "payment" | "done";
+
+function loadRazorpayScript(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if ((window as unknown as { Razorpay?: unknown }).Razorpay) {
+      resolve();
+      return;
+    }
+    const s = document.createElement("script");
+    s.src = "https://checkout.razorpay.com/v1/checkout.js";
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error("Could not load the payment form."));
+    document.body.appendChild(s);
+  });
+}
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -141,6 +157,10 @@ export function BookingWidget(props: BookingWidgetProps) {
     startsAtIso: string;
     endsAtIso: string;
   } | null>(null);
+  const [paymentInfo, setPaymentInfo] = useState<
+    NonNullable<BookingResult["payment"]> | null
+  >(null);
+  const [paying, setPaying] = useState(false);
 
   // Month availability
   useEffect(() => {
@@ -193,6 +213,58 @@ export function BookingWidget(props: BookingWidgetProps) {
     );
   }
 
+  async function openRazorpayCheckout(
+    payment: NonNullable<BookingResult["payment"]>
+  ) {
+    setPaying(true);
+    setError(null);
+    try {
+      await loadRazorpayScript();
+      const Razorpay = (window as unknown as { Razorpay: new (o: object) => { open: () => void } }).Razorpay;
+      const rzp = new Razorpay({
+        key: payment.keyId,
+        amount: payment.amount,
+        currency: payment.currency,
+        name: "BookMus",
+        description: title,
+        order_id: payment.orderId,
+        prefill: { name, email, contact: phone },
+        theme: { color: "#4f46e5" },
+        handler: async (resp: {
+          razorpay_order_id: string;
+          razorpay_payment_id: string;
+          razorpay_signature: string;
+        }) => {
+          try {
+            await confirmRazorpayPayment({
+              orderId: resp.razorpay_order_id,
+              paymentId: resp.razorpay_payment_id,
+              signature: resp.razorpay_signature,
+            });
+            setStep("done");
+          } catch (err) {
+            setError(
+              err instanceof Error
+                ? err.message
+                : "Payment verification failed."
+            );
+          } finally {
+            setPaying(false);
+          }
+        },
+        modal: {
+          ondismiss: () => setPaying(false),
+        },
+      });
+      rzp.open();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Could not open payment form."
+      );
+      setPaying(false);
+    }
+  }
+
   async function submitBooking(e: React.FormEvent) {
     e.preventDefault();
     if (!selectedSlot) return;
@@ -209,8 +281,18 @@ export function BookingWidget(props: BookingWidgetProps) {
         bookerTimezone: guestTz,
         idempotencyKey: crypto.randomUUID(),
       });
-      setConfirmation(res);
-      setStep("done");
+      setConfirmation({
+        startsAtIso: res.startsAtIso,
+        endsAtIso: res.endsAtIso,
+      });
+      if (res.payment) {
+        setPaymentInfo(res.payment);
+        setStep("payment");
+        // Open checkout automatically; the button below re-opens it.
+        openRazorpayCheckout(res.payment);
+      } else {
+        setStep("done");
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Booking failed.");
     } finally {
@@ -226,6 +308,52 @@ export function BookingWidget(props: BookingWidgetProps) {
         : locationType === "in_person"
           ? "In person"
           : "Custom location";
+
+  /* ── Payment ──────────────────────────────────────────────────── */
+  if (step === "payment" && confirmation && paymentInfo) {
+    return (
+      <div className="mx-auto max-w-xl rounded-3xl border border-slate-200 bg-white p-10 text-center shadow-xl shadow-slate-900/5">
+        <div className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-indigo-100">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-8 w-8 text-indigo-600">
+            <path d="M2 7h20M2 7a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7Zm5 7h4" strokeLinecap="round" />
+          </svg>
+        </div>
+        <h2 className="mt-6 text-2xl font-bold text-slate-900">
+          Almost there — complete payment
+        </h2>
+        <p className="mt-2 text-sm text-slate-500">
+          Your slot is held. Pay securely via Razorpay to confirm.
+        </p>
+        <div className="mt-6 rounded-2xl bg-slate-50 p-5 text-left">
+          <p className="font-semibold text-slate-900">{title}</p>
+          <p className="mt-1 text-sm text-slate-600">
+            {formatFull(confirmation.startsAtIso, guestTz)}
+          </p>
+          <p className="mt-2 text-lg font-bold text-slate-900">
+            ₹{(paymentInfo.amount / 100).toLocaleString("en-IN")}{" "}
+            <span className="text-sm font-normal text-slate-500">
+              {paymentInfo.currency}
+            </span>
+          </p>
+        </div>
+        {error && (
+          <p className="mt-4 rounded-lg bg-red-50 px-3.5 py-2.5 text-sm text-red-700">
+            {error}
+          </p>
+        )}
+        <button
+          onClick={() => openRazorpayCheckout(paymentInfo)}
+          disabled={paying}
+          className="mt-6 w-full rounded-xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white shadow-sm shadow-indigo-600/30 transition hover:bg-indigo-700 disabled:opacity-60"
+        >
+          {paying ? "Opening secure checkout…" : `Pay ₹${(paymentInfo.amount / 100).toLocaleString("en-IN")}`}
+        </button>
+        <p className="mt-3 text-xs text-slate-400">
+          UPI, cards, netbanking & wallets accepted
+        </p>
+      </div>
+    );
+  }
 
   /* ── Done ─────────────────────────────────────────────────────── */
   if (step === "done" && confirmation) {

@@ -7,6 +7,17 @@ import {
   type WeeklyHours,
   type ScheduleOverride,
 } from "@/lib/scheduling";
+import {
+  sendEmail,
+  bookingConfirmationEmail,
+  isEmailConfigured,
+} from "@/lib/integrations/email";
+import {
+  createRazorpayOrder,
+  isPaymentsConfigured,
+  verifyPaymentSignature,
+} from "@/lib/integrations/payments";
+import { createServiceClient } from "@/lib/supabase/server";
 
 interface SlotContext {
   id: string;
@@ -169,10 +180,20 @@ export interface CreateBookingInput {
   idempotencyKey: string;
 }
 
-export async function createBooking(input: CreateBookingInput): Promise<{
+export interface BookingResult {
   startsAtIso: string;
   endsAtIso: string;
-}> {
+  payment?: {
+    orderId: string;
+    keyId: string;
+    amount: number;
+    currency: string;
+  };
+}
+
+export async function createBooking(
+  input: CreateBookingInput
+): Promise<BookingResult> {
   const supabase = await createClient();
   const ctx = await getSlotContext(input.eventTypeId);
   if (!ctx) throw new Error("This event is no longer available.");
@@ -237,17 +258,126 @@ export async function createBooking(input: CreateBookingInput): Promise<{
     throw new Error("Could not create the booking. Please try again.");
   }
 
+  const result: BookingResult = {
+    startsAtIso: startsAt.toISOString(),
+    endsAtIso: endsAt.toISOString(),
+  };
+
   if (ctx.price_paise > 0) {
-    // Placeholder row; Razorpay checkout completes it (next integration step).
+    let providerOrderId: string | null = null;
+    if (isPaymentsConfigured()) {
+      try {
+        const order = await createRazorpayOrder({
+          amountPaise: ctx.price_paise,
+          currency: ctx.currency,
+          receipt: `bk_${data.id.slice(0, 8)}_${Date.now().toString(36)}`,
+          notes: { booking_id: data.id },
+        });
+        providerOrderId = order.id;
+        result.payment = {
+          orderId: order.id,
+          keyId: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID!,
+          amount: order.amount,
+          currency: order.currency,
+        };
+      } catch (e) {
+        // Order creation failed — keep the booking, host follows up manually.
+        console.error("Razorpay order failed:", e);
+      }
+    }
+    // Placeholder row; checkout or webhook moves it to captured.
     await supabase.from("payments").insert({
       booking_id: data.id,
       provider: "razorpay",
       amount_paise: ctx.price_paise,
       currency: ctx.currency,
       status: "pending",
+      provider_order_id: providerOrderId,
       idempotency_key: input.idempotencyKey,
     });
   }
 
-  return { startsAtIso: startsAt.toISOString(), endsAtIso: endsAt.toISOString() };
+  // Confirmation email — never fails the booking.
+  try {
+    if (isEmailConfigured()) {
+      const { data: meta } = await supabase
+        .from("event_types")
+        .select("title, owner_profile_id")
+        .eq("id", ctx.id)
+        .maybeSingle();
+      const title = meta?.title ?? "Booking";
+      let hostName = "your host";
+      if (meta?.owner_profile_id) {
+        const { data: host } = await supabase
+          .from("profiles")
+          .select("display_name")
+          .eq("id", meta.owner_profile_id)
+          .maybeSingle();
+        if (host?.display_name) hostName = host.display_name;
+      }
+      const whenText = new Intl.DateTimeFormat("en-IN", {
+        timeZone: input.bookerTimezone,
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+      }).format(startsAt);
+      const mail = bookingConfirmationEmail({
+        hostName,
+        eventTitle: title,
+        whenText,
+        bookerName: name,
+      });
+      const sent = await sendEmail({
+        to: email,
+        subject: mail.subject,
+        html: mail.html,
+      });
+      await supabase.rpc("log_notification", {
+        p_booking_id: data.id,
+        p_channel: "email",
+        p_template: "booking_confirmation",
+        p_recipient: email,
+        p_provider: "resend",
+        p_provider_id: sent.providerId ?? null,
+        p_status: sent.ok ? "sent" : "failed",
+        p_error: sent.error ?? null,
+      });
+    }
+  } catch (e) {
+    console.error("Confirmation email failed:", e);
+  }
+
+  return result;
+}
+
+/**
+ * Called by the browser after Razorpay Checkout succeeds.
+ * The cryptographic signature proves the payment happened; only then
+ * do we mark the payment captured (service role, never trust the client).
+ */
+export async function confirmRazorpayPayment(input: {
+  orderId: string;
+  paymentId: string;
+  signature: string;
+}): Promise<{ ok: boolean }> {
+  if (
+    !verifyPaymentSignature({
+      orderId: input.orderId,
+      paymentId: input.paymentId,
+      signature: input.signature,
+    })
+  ) {
+    throw new Error("Payment verification failed. Contact the host.");
+  }
+  const supabase = await createServiceClient();
+  const { error } = await supabase
+    .from("payments")
+    .update({ status: "captured", provider_payment_id: input.paymentId })
+    .eq("provider_order_id", input.orderId)
+    .eq("status", "pending");
+  if (error) throw new Error("Could not record the payment.");
+  return { ok: true };
 }

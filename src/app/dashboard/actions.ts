@@ -4,6 +4,11 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { ensureDefaultSchedule } from "@/lib/scheduling";
+import {
+  sendEmail,
+  bookingCancellationEmail,
+  isEmailConfigured,
+} from "@/lib/integrations/email";
 
 async function requireUser() {
   const supabase = await createClient();
@@ -179,6 +184,15 @@ export async function saveAvailability(formData: FormData) {
 
 export async function cancelBooking(id: string) {
   const { supabase, user } = await requireUser();
+
+  const { data: booking } = await supabase
+    .from("bookings")
+    .select(
+      "id, starts_at, booker_name, booker_email, booker_timezone, event_types!inner(title)"
+    )
+    .eq("id", id)
+    .maybeSingle();
+
   // RLS "event owners can update bookings" enforces ownership.
   const { error } = await supabase
     .from("bookings")
@@ -187,6 +201,51 @@ export async function cancelBooking(id: string) {
   if (error) throw new Error(error.message);
   void user;
   revalidatePath("/dashboard/bookings");
+  revalidatePath("/dashboard");
+
+  // Notify the guest — best effort, never fails the cancellation.
+  try {
+    if (booking && isEmailConfigured()) {
+      const et = booking.event_types as unknown as { title: string };
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("display_name, timezone")
+        .eq("id", user.id)
+        .maybeSingle();
+      const whenText = new Intl.DateTimeFormat("en-IN", {
+        timeZone: booking.booker_timezone ?? profile?.timezone ?? "Asia/Kolkata",
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+      }).format(new Date(booking.starts_at));
+      const mail = bookingCancellationEmail({
+        hostName: profile?.display_name ?? "your host",
+        eventTitle: et.title,
+        whenText,
+        bookerName: booking.booker_name,
+      });
+      const sent = await sendEmail({
+        to: booking.booker_email,
+        subject: mail.subject,
+        html: mail.html,
+      });
+      await supabase.rpc("log_notification", {
+        p_booking_id: booking.id,
+        p_channel: "email",
+        p_template: "booking_cancellation",
+        p_recipient: booking.booker_email,
+        p_provider: "resend",
+        p_provider_id: sent.providerId ?? null,
+        p_status: sent.ok ? "sent" : "failed",
+        p_error: sent.error ?? null,
+      });
+    }
+  } catch (e) {
+    console.error("Cancellation email failed:", e);
+  }
 }
 
 /* ── Profile / settings ───────────────────────────────────────────── */
