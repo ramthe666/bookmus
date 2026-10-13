@@ -1,5 +1,6 @@
 import { createServiceClient } from "@/lib/supabase/server";
 import { CancelForm } from "./cancel-form";
+import { RescheduleForm } from "./reschedule-form";
 
 function formatWhen(startsAtIso: string, timeZone: string | null): string {
   return new Intl.DateTimeFormat("en-IN", {
@@ -41,7 +42,7 @@ export default async function GuestCancelPage({
   const { data: booking } = await supabase
     .from("bookings")
     .select(
-      "id, starts_at, status, booker_timezone, event_types!inner(title, owner_profile_id)"
+      "id, starts_at, status, timezone, booker_timezone, event_type_id, event_types!inner(title, owner_profile_id)"
     )
     .eq("cancel_token", token.trim())
     .maybeSingle();
@@ -95,7 +96,7 @@ export default async function GuestCancelPage({
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-12">
       <div className="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-8 shadow-xl shadow-slate-900/5">
-        <h1 className="text-xl font-bold text-slate-900">Cancel booking</h1>
+        <h1 className="text-xl font-bold text-slate-900">Manage booking</h1>
         <div className="mt-4 rounded-2xl bg-slate-50 p-4 text-left">
           <p className="font-semibold text-slate-900">{et.title}</p>
           <p className="mt-1 text-sm text-slate-600">
@@ -108,7 +109,15 @@ export default async function GuestCancelPage({
             with {host?.display_name ?? "your host"}
           </p>
         </div>
-        <CancelForm token={token} />
+        <RescheduleForm
+          token={token}
+          eventTypeId={booking.event_type_id as string}
+          hostTimezone={(booking.timezone as string) ?? "Asia/Kolkata"}
+          bookerTimezone={(booking.booker_timezone as string | null) ?? null}
+        />
+        <div className="mt-4 border-t border-slate-100 pt-4">
+          <CancelForm token={token} />
+        </div>
       </div>
     </div>
   );

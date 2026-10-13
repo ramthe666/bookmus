@@ -17,6 +17,8 @@ import {
   finalizePaidBooking,
   sendConfirmationForBooking,
 } from "@/lib/booking-lifecycle";
+import { syncBookingToCalendars } from "@/lib/calendar-sync";
+import { enforceRateLimit } from "@/lib/rate-limit";
 import { logAudit } from "@/lib/audit";
 
 interface SlotContext {
@@ -36,7 +38,9 @@ interface SlotContext {
   ownerProfileId: string;
 }
 
-async function getSlotContext(eventTypeId: string): Promise<SlotContext | null> {
+export async function getSlotContext(
+  eventTypeId: string
+): Promise<SlotContext | null> {
   const supabase = await createClient();
 
   const { data: et } = await supabase
@@ -96,7 +100,9 @@ async function getSlotContext(eventTypeId: string): Promise<SlotContext | null> 
 async function bookedRanges(
   eventTypeId: string,
   fromIso: string,
-  toIso: string
+  toIso: string,
+  ownerProfileId?: string,
+  excludeRange?: { starts_at: string; ends_at: string }
 ): Promise<{ starts_at: string; ends_at: string }[]> {
   const supabase = await createClient();
   const { data, error } = await supabase.rpc("get_booked_ranges", {
@@ -105,7 +111,37 @@ async function bookedRanges(
     p_to: toIso,
   });
   if (error) throw new Error("Could not load availability.");
-  return (data ?? []) as { starts_at: string; ends_at: string }[];
+  let ranges = (data ?? []) as { starts_at: string; ends_at: string }[];
+  if (excludeRange) {
+    ranges = ranges.filter(
+      (r) =>
+        !(
+          r.starts_at === excludeRange.starts_at &&
+          r.ends_at === excludeRange.ends_at
+        )
+    );
+  }
+
+  // Merge external busy blocks from connected calendars (spec §8.2).
+  // Provider outage degrades to BookFlow-only availability — never a
+  // broken page.
+  if (ownerProfileId) {
+    try {
+      const { getHostBusyBlocks } = await import(
+        "@/lib/integrations/calendar"
+      );
+      const busy = await getHostBusyBlocks(
+        supabase,
+        ownerProfileId,
+        fromIso,
+        toIso
+      );
+      ranges.push(...busy);
+    } catch (e) {
+      console.error("External busy-time merge failed:", e);
+    }
+  }
+  return ranges;
 }
 
 /** Dates in a month (1-12) that have at least one bookable slot. */
@@ -121,7 +157,12 @@ export async function getMonthAvailability(
   const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
   const fromIso = `${year}-${mm}-01T00:00:00Z`;
   const toIso = `${year}-${mm}-${String(lastDay).padStart(2, "0")}T23:59:59Z`;
-  const ranges = await bookedRanges(eventTypeId, fromIso, toIso);
+  const ranges = await bookedRanges(
+    eventTypeId,
+    fromIso,
+    toIso,
+    ctx.ownerProfileId
+  );
 
   const result: Record<string, number> = {};
   for (let d = 1; d <= lastDay; d++) {
@@ -154,7 +195,8 @@ export async function getSlotsForDate(
   const ranges = await bookedRanges(
     eventTypeId,
     `${dateStr}T00:00:00Z`,
-    `${dateStr}T23:59:59Z`
+    `${dateStr}T23:59:59Z`,
+    ctx.ownerProfileId
   );
   const slots = generateSlots({
     dateStr,
@@ -169,6 +211,45 @@ export async function getSlotsForDate(
     maxBookingsPerDay: ctx.max_bookings_per_day,
   });
   return slots.map((s) => s.toISOString());
+}
+
+/**
+ * Re-validates a requested start instant against live availability
+ * (spec §5.3). Throws when the slot is not bookable. Shared by booking
+ * creation and rescheduling so both use the same availability engine.
+ */
+export async function validateSlotAvailable(
+  eventTypeId: string,
+  startsAtIso: string,
+  excludeRange?: { starts_at: string; ends_at: string }
+): Promise<SlotContext> {
+  const ctx = await getSlotContext(eventTypeId);
+  if (!ctx) throw new Error("This event is no longer available.");
+  const dateStr = toDateStrInTz(new Date(startsAtIso), ctx.hostTimezone);
+  const ranges = await bookedRanges(
+    eventTypeId,
+    `${dateStr}T00:00:00Z`,
+    `${dateStr}T23:59:59Z`,
+    ctx.ownerProfileId,
+    excludeRange
+  );
+  const slots = generateSlots({
+    dateStr,
+    hostTimezone: ctx.hostTimezone,
+    weeklyHours: ctx.weeklyHours,
+    overrides: ctx.overrides,
+    durationMin: ctx.duration_minutes,
+    bufferBeforeMin: ctx.buffer_before_minutes,
+    bufferAfterMin: ctx.buffer_after_minutes,
+    existingBookings: ranges,
+    minNoticeHours: ctx.min_notice_hours,
+    maxBookingsPerDay: ctx.max_bookings_per_day,
+  });
+  const wanted = new Date(startsAtIso).toISOString();
+  if (!slots.some((s) => s.toISOString() === wanted)) {
+    throw new Error("That time is not available — please pick another slot.");
+  }
+  return ctx;
 }
 
 export interface CreateBookingInput {
@@ -200,33 +281,11 @@ export interface BookingResult {
 export async function createBooking(
   input: CreateBookingInput
 ): Promise<BookingResult> {
+  await enforceRateLimit("booking:create", 10, 60_000);
   const supabase = await createClient();
-  const ctx = await getSlotContext(input.eventTypeId);
-  if (!ctx) throw new Error("This event is no longer available.");
-
   // Re-validate the requested slot against live data (anti double-book).
-  const dateStr = toDateStrInTz(new Date(input.startsAtIso), ctx.hostTimezone);
-  const ranges = await bookedRanges(
-    input.eventTypeId,
-    `${dateStr}T00:00:00Z`,
-    `${dateStr}T23:59:59Z`
-  );
-  const slots = generateSlots({
-    dateStr,
-    hostTimezone: ctx.hostTimezone,
-    weeklyHours: ctx.weeklyHours,
-    overrides: ctx.overrides,
-    durationMin: ctx.duration_minutes,
-    bufferBeforeMin: ctx.buffer_before_minutes,
-    bufferAfterMin: ctx.buffer_after_minutes,
-    existingBookings: ranges,
-    minNoticeHours: ctx.min_notice_hours,
-    maxBookingsPerDay: ctx.max_bookings_per_day,
-  });
+  const ctx = await validateSlotAvailable(input.eventTypeId, input.startsAtIso);
   const wanted = new Date(input.startsAtIso).toISOString();
-  if (!slots.some((s) => s.toISOString() === wanted)) {
-    throw new Error("That time was just taken — please pick another slot.");
-  }
 
   const name = input.name.trim();
   const email = input.email.trim().toLowerCase();
@@ -266,6 +325,10 @@ export async function createBooking(
       throw new Error(
         "This booking was already received — check your email for the confirmation."
       );
+    }
+    if (error.code === "23P01") {
+      // Exclusion constraint: a concurrent booking won the race.
+      throw new Error("That time was just taken — please pick another slot.");
     }
     throw new Error("Could not create the booking. Please try again.");
   }
@@ -325,9 +388,10 @@ export async function createBooking(
     });
   }
 
-  // Confirmation email goes out immediately only for free events.
-  // Paid events get it when payment is verified (finalizePaidBooking).
+  // Confirmation email + calendar event go out immediately only for free
+  // events. Paid events get them when payment is verified (finalizePaidBooking).
   if (!needsPayment) {
+    await syncBookingToCalendars(supabase, data.id);
     await sendConfirmationForBooking(supabase, data.id);
   }
 

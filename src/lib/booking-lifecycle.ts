@@ -3,9 +3,11 @@ import {
   sendEmail,
   bookingConfirmationEmail,
   bookingCancellationEmail,
+  bookingRescheduledEmail,
   isEmailConfigured,
 } from "@/lib/integrations/email";
 import { logAudit } from "@/lib/audit";
+import { syncBookingToCalendars, deleteSyncedBooking } from "@/lib/calendar-sync";
 
 /**
  * Shared booking-lifecycle transitions (spec §7).
@@ -214,8 +216,57 @@ export async function finalizePaidBooking(
     },
   });
 
+  // Linked provider calendar event (best effort, status visible on booking).
+  await syncBookingToCalendars(supabase, bookingId);
+
   await sendConfirmationForBooking(supabase, bookingId);
   return true;
+}
+
+/** Cancel-side calendar cleanup shared by guest + host flows. */
+export async function cleanupSyncedBooking(
+  supabase: SupabaseClient,
+  bookingId: string
+): Promise<void> {
+  await deleteSyncedBooking(supabase, bookingId);
+}
+
+/** Reschedule notification (old → new time, both with timezone). */
+export async function sendRescheduledForBooking(
+  supabase: SupabaseClient,
+  bookingId: string,
+  oldStartsAtIso: string
+): Promise<void> {
+  try {
+    if (!isEmailConfigured()) return;
+    const ctx = await loadMailContext(supabase, bookingId);
+    if (!ctx) return;
+    const mail = bookingRescheduledEmail({
+      hostName: ctx.host_name,
+      eventTitle: ctx.event_title,
+      whenText: formatWhen(ctx.starts_at, ctx.booker_timezone),
+      oldWhenText: formatWhen(oldStartsAtIso, ctx.booker_timezone),
+      newWhenText: formatWhen(ctx.starts_at, ctx.booker_timezone),
+      bookerName: ctx.booker_name,
+      meetingUrl: ctx.meeting_url,
+      cancelUrl: cancelUrlFor(ctx.cancel_token),
+    });
+    const sent = await sendEmail({
+      to: ctx.booker_email,
+      subject: mail.subject,
+      html: mail.html,
+    });
+    await logNotification(supabase, {
+      bookingId: ctx.id,
+      template: "booking_rescheduled",
+      recipient: ctx.booker_email,
+      providerId: sent.providerId ?? null,
+      ok: sent.ok,
+      error: sent.error ?? null,
+    });
+  } catch (e) {
+    console.error("Reschedule email failed:", e);
+  }
 }
 
 /** Sweep stale payment holds to 'expired' so their slots release. */

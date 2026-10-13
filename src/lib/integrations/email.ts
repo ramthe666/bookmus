@@ -85,6 +85,26 @@ export function bookingCancellationEmail(a: BookingMailArgs) {
   };
 }
 
+export interface RescheduleMailArgs extends BookingMailArgs {
+  oldWhenText: string;
+  newWhenText: string;
+}
+
+export function bookingRescheduledEmail(a: RescheduleMailArgs) {
+  return {
+    subject: `Rescheduled: ${a.eventTitle} with ${a.hostName}`,
+    html: shell(
+      "Booking rescheduled",
+      `<p>Hi ${a.bookerName},</p>
+       <p>Your <strong>${a.eventTitle}</strong> with ${a.hostName} has been moved.</p>
+       <p style="color:#64748b;text-decoration:line-through;">${a.oldWhenText}</p>
+       <p><strong>${a.newWhenText}</strong></p>
+       ${a.meetingUrl ? `<p><a href="${a.meetingUrl}">Join the meeting</a></p>` : ""}
+       ${a.cancelUrl ? `<p style="font-size:13px;color:#64748b;">Need to cancel? <a href="${a.cancelUrl}">Cancel this booking</a></p>` : ""}`
+    ),
+  };
+}
+
 export function bookingReminderEmail(a: BookingMailArgs) {
   return {
     subject: `Reminder: ${a.eventTitle} with ${a.hostName} tomorrow`,

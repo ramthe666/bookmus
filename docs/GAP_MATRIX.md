@@ -26,22 +26,23 @@ No existing migrations were modified; all proposed schema work is additive.
 | Public booking page | ✅ | `src/app/u/[username]/[slug]` |
 | Booking lifecycle states | ⚠️ | Only `confirmed`/`cancelled` exercised; `pending`, `reschedule_pending`, `expired`, `completed`, `no-show` not in flow |
 | Paid booking: pending hold → confirm on verified payment | ✅ | `20261013150000_booking_lifecycle.sql` adds `pending`/`expired` states; `createBooking` holds 30 min, `finalizePaidBooking` confirms on verified checkout/webhook; cron expires stale holds |
-| Internal calendar (day/week/month/agenda) | ❌ | Dashboard has booking list only (`src/app/dashboard/bookings`) |
-| Google/Zoho busy-time → availability | ❌ | OAuth connects; busy blocks never pulled, availability ignores them |
+| Internal calendar (day/week/month/agenda) | ⚠️ | Week view live (`/dashboard/calendar`): BookFlow bookings + external busy blocks, sync-status dots, week nav (2026-10-13). Day/month/agenda views not yet built |
+| Google/Zoho busy-time → availability | ✅ | `getHostBusyBlocks` merges Google freebusy + Zoho events into the slot engine; provider outage degrades gracefully (2026-10-13) |
 | Time zones (UTC instants + IANA, per-viewer render) | ✅ | Slot engine builds in host TZ, stores UTC; `Intl.DateTimeFormat` render |
 | Email confirmations / reminders | ✅ | `src/lib/email.ts`, `/api/cron/reminders`, `notification_log` |
 | Payment verification (server-side, webhook) | ✅ | `src/app/api/razorpay/order`, `src/app/api/webhooks/razorpay` |
 | Audit trail | ✅ | `20261013160000_audit_trail.sql`: append-only `audit_events` (RLS: owners read own, service-role writes, no update/delete); `src/lib/audit.ts`; wired into booking create/cancel/confirm, hold expiry, integration connect/disconnect; `/dashboard/activity` feed (2026-10-13) |
 | Tenant isolation (RLS) | ✅ | RLS on all tables, `auth.uid()`-scoped policies |
-| Rate limiting (public booking, auth, OTP) | ❌ | No rate limits on any public route |
-| OAuth token refresh before expiry | ❌ | Tokens encrypted at rest; no refresh worker |
+| Rate limiting (public booking, auth, OTP) | ⚠️ | In-memory sliding-window limiter on booking create + guest cancel/reschedule (`src/lib/rate-limit.ts`); per-instance on serverless, Redis swap documented (2026-10-13) |
+| OAuth token refresh before expiry | ✅ | `getValidAccessToken` refreshes + persists Google/Zoho tokens on demand (2026-10-13) |
 
 ## 2. SHOULD — commercial completeness
 
 | Requirement | Status | Evidence / notes |
 |---|---|---|
 | Guest self-cancel via token link | ✅ | `/b/cancel/[token]` page + `cancelBookingByToken` action; manage link on confirmation screen, in confirmation email, and copy button on dashboard (2026-10-13) |
-| Guest self-reschedule via token link | ❌ | `reschedule_token` column still unused |
+| Guest self-reschedule via token link | ✅ | `rescheduleBookingByToken` + slot picker on the manage page; same availability engine, own slot excluded, provider event moved in place, reschedule email (2026-10-13) |
+| Host reschedule | ✅ | `/dashboard/bookings/[id]/reschedule` with live slot picker (2026-10-13) |
 | Reschedule flow (policy + availability recheck) | ❌ | No reschedule API or UI |
 | Customer portal / manage booking | ❌ | — |
 | Rebook flow | ❌ | — |
@@ -62,15 +63,16 @@ advanced routing forms — all ❌ Missing, intentionally deferred per spec.
 
 ## 4. Spec-explicit correctness gaps (fix before scaling)
 
-1. **Double-book race** (§5.3): slot revalidation is app-level (read → insert).
-   Two concurrent requests can both pass. Fix: Postgres `EXCLUDE` constraint on
-   booking `tstzrange` per owner (new migration) + keep app check for friendly errors.
-2. **No durable outbox** (§9.4/§11.2): emails + calendar sync run fire-and-forget
-   inside the booking request. A crash/provider outage loses them silently.
-   Fix: `outbox_events` table + worker (cron) with idempotent claim/retry.
-3. **Calendar sync failure invisible** (§8.2): fire-and-forget `.catch(() => {})`
-   in `src/app/api/bookings/route.ts`. Fix: persist sync status per booking,
-   surface in dashboard, retry via worker.
+1. ✅ **Double-book race** (§5.3): `bookings_no_overlap` exclusion constraint
+   (migration `20261013170000`); app check kept for friendly errors; `23P01`
+   mapped to "that time was just taken" (2026-10-13).
+2. **No durable outbox** (§9.4/§11.2): emails + calendar sync run inline in the
+   request. A crash mid-request can lose them. Fix: `outbox_events` table +
+   worker (cron) with idempotent claim/retry — next slice.
+3. ✅ **Calendar sync failure invisible** (§8.2): `calendar_sync_status` columns
+   (migration `20261013170000`); `src/lib/calendar-sync.ts` creates/updates/
+   deletes linked provider events with visible status; failures surface on the
+   bookings list and calendar view (2026-10-13).
 4. **Secrets hygiene** (§10.2): `console.error` in callbacks may log token-adjacent
    data; audit before production.
 
@@ -82,11 +84,11 @@ Per spec §15.1 (small vertical slices, additive migrations only):
 2. ✅ Guest self-cancel via token (2026-10-13)
 3. ✅ Paid lifecycle fix: `pending` → `confirmed` on verified payment/webhook (2026-10-13)
 4. ✅ **Audit trail** (2026-10-13)
-5. **Reschedule via token** (guest) + host reschedule with availability recheck
-6. **No-double-book**: exclusion-constraint migration + concurrency test
-7. **Outbox**: `outbox_events` + cron worker for email/calendar retries
-8. **Busy-time integration**: pull Google/Zoho busy blocks into the slot engine
-9. **Internal calendar view** + sync-health indicators
+5. ✅ **Reschedule via token** (guest) + host reschedule (2026-10-13)
+6. ✅ **No-double-book**: exclusion-constraint migration (2026-10-13)
+7. **Outbox**: `outbox_events` + cron worker for email/calendar retries — next
+8. ✅ **Busy-time integration** (2026-10-13)
+9. ✅ **Internal calendar week view** + sync-health indicators (2026-10-13)
 10. Roles/workspaces/staff, page builder, template editor, CRM, reports (spec phases 5–8)
 
 Each slice ships with: UI states (loading/empty/error), server enforcement, and a

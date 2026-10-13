@@ -53,6 +53,7 @@ export function auditActionLabel(action: string): string {
     "booking.created": "Booking created",
     "booking.confirmed": "Booking confirmed",
     "booking.cancelled": "Booking cancelled",
+    "booking.rescheduled": "Booking rescheduled",
     "booking.hold_expired": "Payment hold expired",
     "payment.captured": "Payment captured",
     "integration.connected": "Integration connected",

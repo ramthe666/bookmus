@@ -10,6 +10,12 @@ import {
   isEmailConfigured,
 } from "@/lib/integrations/email";
 import { logAudit } from "@/lib/audit";
+import {
+  cleanupSyncedBooking,
+  sendRescheduledForBooking,
+} from "@/lib/booking-lifecycle";
+import { updateSyncedBooking } from "@/lib/calendar-sync";
+import { validateSlotAvailable } from "@/app/u/actions";
 
 async function requireUser() {
   const supabase = await createClient();
@@ -215,6 +221,9 @@ export async function cancelBooking(id: string) {
   revalidatePath("/dashboard/bookings");
   revalidatePath("/dashboard");
 
+  // Remove the linked provider event — best effort, surfaced on the booking.
+  await cleanupSyncedBooking(supabase, id);
+
   // Notify the guest — best effort, never fails the cancellation.
   try {
     if (booking && isEmailConfigured()) {
@@ -258,6 +267,81 @@ export async function cancelBooking(id: string) {
   } catch (e) {
     console.error("Cancellation email failed:", e);
   }
+}
+
+/**
+ * Host reschedule (spec §7.3). Same availability engine as booking;
+ * the booking's own slot is excluded from the conflict check. The linked
+ * provider event is moved in place. RLS "event owners can update bookings"
+ * enforces ownership.
+ */
+export async function rescheduleBooking(id: string, newStartsAtIso: string) {
+  const { supabase, user } = await requireUser();
+
+  const { data: booking } = await supabase
+    .from("bookings")
+    .select("id, status, starts_at, ends_at, booker_email, event_type_id")
+    .eq("id", id)
+    .maybeSingle();
+  if (!booking) throw new Error("Booking not found.");
+  if (booking.status !== "confirmed") {
+    throw new Error("Only confirmed bookings can be rescheduled.");
+  }
+
+  const oldStartsAt = booking.starts_at as string;
+  const newStart = new Date(newStartsAtIso);
+  if (newStart.getTime() <= Date.now()) {
+    throw new Error("The new time must be in the future.");
+  }
+  if (newStart.toISOString() === new Date(oldStartsAt).toISOString()) {
+    return;
+  }
+
+  const ctx = await validateSlotAvailable(
+    booking.event_type_id as string,
+    newStartsAtIso,
+    {
+      starts_at: oldStartsAt,
+      ends_at: booking.ends_at as string,
+    }
+  );
+  const newEnd = new Date(newStart.getTime() + ctx.duration_minutes * 60000);
+
+  const { error } = await supabase
+    .from("bookings")
+    .update({
+      starts_at: newStart.toISOString(),
+      ends_at: newEnd.toISOString(),
+    })
+    .eq("id", id)
+    .eq("status", "confirmed");
+  if (error) {
+    if (error.code === "23P01") {
+      throw new Error("That time was just taken — please pick another slot.");
+    }
+    throw new Error("Could not reschedule. Please try again.");
+  }
+
+  await logAudit(supabase, {
+    action: "booking.rescheduled",
+    targetType: "booking",
+    targetId: id,
+    ownerProfileId: user.id,
+    actorProfileId: user.id,
+    actorType: "user",
+    metadata: {
+      via: "dashboard",
+      old_starts_at: oldStartsAt,
+      new_starts_at: newStart.toISOString(),
+      booker_email: (booking.booker_email as string | undefined) ?? null,
+    },
+  });
+
+  await updateSyncedBooking(supabase, id);
+  await sendRescheduledForBooking(supabase, id, oldStartsAt);
+
+  revalidatePath("/dashboard/bookings");
+  revalidatePath("/dashboard");
 }
 
 /* ── Profile / settings ───────────────────────────────────────────── */

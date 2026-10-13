@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { cancelBooking } from "../actions";
 import { CopyLinkButton } from "./copy-link-button";
@@ -59,7 +60,7 @@ export default async function BookingsPage() {
   const { data: bookings } = await supabase
     .from("bookings")
     .select(
-      "id, starts_at, ends_at, status, booker_name, booker_email, cancel_token, event_types!inner(title)"
+      "id, starts_at, ends_at, status, booker_name, booker_email, cancel_token, calendar_sync_status, calendar_sync_error, event_types!inner(title)"
     )
     .order("starts_at", { ascending: false })
     .limit(200);
@@ -101,11 +102,38 @@ export default async function BookingsPage() {
                     <p className="mt-0.5 truncate text-sm text-slate-500">
                       {et.title} · {b.booker_email}
                     </p>
+                    {b.calendar_sync_status === "failed" && (
+                      <p
+                        className="mt-0.5 text-xs text-red-600"
+                        title={(b.calendar_sync_error as string | null) ?? "Calendar sync failed"}
+                      >
+                        ⚠ Calendar sync failed —{" "}
+                        <Link
+                          href="/dashboard/integrations"
+                          className="underline"
+                        >
+                          check Integrations
+                        </Link>
+                      </p>
+                    )}
                   </div>
                   <p className="shrink-0 text-sm font-medium text-slate-700">
                     {formatInTz(b.starts_at, tz)}
                   </p>
-                  {(b.status === "confirmed" || b.status === "pending") &&
+                  {b.status === "confirmed" &&
+                    new Date(b.starts_at).getTime() > Date.now() && (
+                      <>
+                        <Link
+                          href={`/dashboard/bookings/${b.id}/reschedule`}
+                          className="rounded-lg px-3 py-1.5 text-xs font-medium text-indigo-600 transition hover:bg-indigo-50"
+                        >
+                          Reschedule
+                        </Link>
+                        <CopyLinkButton token={b.cancel_token as string} />
+                        <CancelButton id={b.id} />
+                      </>
+                    )}
+                  {b.status === "pending" &&
                     new Date(b.starts_at).getTime() > Date.now() && (
                       <>
                         <CopyLinkButton token={b.cancel_token as string} />
