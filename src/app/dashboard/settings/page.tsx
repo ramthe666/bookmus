@@ -112,8 +112,22 @@ export default async function SettingsPage() {
       </form>
 
       <Link
-        href="/dashboard/settings/templates"
+        href="/dashboard/page-builder"
         className="mt-6 flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-5 transition hover:border-indigo-300 hover:shadow-sm"
+      >
+        <div>
+          <p className="font-semibold text-slate-900">Booking page design</p>
+          <p className="mt-0.5 text-xs text-slate-500">
+            Customize your public booking page layout, branding and sections in
+            the page builder.
+          </p>
+        </div>
+        <span className="text-sm font-medium text-indigo-600">Open →</span>
+      </Link>
+
+      <Link
+        href="/dashboard/settings/templates"
+        className="mt-3 flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-5 transition hover:border-indigo-300 hover:shadow-sm"
       >
         <div>
           <p className="font-semibold text-slate-900">Email templates</p>

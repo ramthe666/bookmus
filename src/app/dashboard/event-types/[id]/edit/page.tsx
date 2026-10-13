@@ -31,11 +31,23 @@ export default async function EditEventTypePage({
     .eq("event_type_id", id)
     .order("position");
 
-  const { data: questionRows } = await supabase
-    .from("event_type_questions")
-    .select("id, label, field_type, is_required, options")
-    .eq("event_type_id", id)
-    .order("position");
+  let questionRows: {
+    id: string;
+    label: string;
+    field_type: string;
+    is_required: boolean;
+    options: string[];
+  }[] = [];
+  try {
+    const { data } = await supabase
+      .from("event_type_questions")
+      .select("id, label, field_type, is_required, options")
+      .eq("event_type_id", id)
+      .order("position");
+    questionRows = (data ?? []) as typeof questionRows;
+  } catch {
+    // Migration not applied yet.
+  }
 
   const initial: EventTypeValues = {
     title: et.title,
@@ -47,13 +59,15 @@ export default async function EditEventTypePage({
     min_notice_hours: Number(et.min_notice_hours),
     max_ahead_days: et.max_ahead_days,
     max_bookings_per_day: et.max_bookings_per_day ? String(et.max_bookings_per_day) : "",
+    max_attendees: (et as { max_attendees?: number }).max_attendees ?? 1,
+    cancel_cutoff_hours: (et as { cancel_cutoff_hours?: number }).cancel_cutoff_hours ?? 24,
     price_rupees: et.price_paise > 0 ? String(et.price_paise / 100) : "",
     location_type: et.location_type,
     meeting_provider: et.meeting_provider,
     color: et.color,
     is_active: et.is_active,
     is_private: (et.is_private as boolean) ?? false,
-    questions: (questionRows ?? []).map((q) => ({
+    questions: questionRows.map((q) => ({
       id: q.id as string,
       label: q.label as string,
       field_type: q.field_type as string,

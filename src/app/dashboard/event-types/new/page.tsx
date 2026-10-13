@@ -13,6 +13,8 @@ const defaults: EventTypeValues = {
   min_notice_hours: 2,
   max_ahead_days: 60,
   max_bookings_per_day: "",
+  max_attendees: 1,
+  cancel_cutoff_hours: 24,
   price_rupees: "",
   location_type: "video",
   meeting_provider: "google_meet",

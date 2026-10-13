@@ -66,17 +66,23 @@ export default async function BookingsPage() {
     .order("starts_at", { ascending: false })
     .limit(200);
 
-  // Question labels for answer display.
+  // Question labels for answer display (graceful if migration not applied).
   const eventTypeIds = [...new Set((bookings ?? []).map((b) => b.event_type_id as string))];
-  const { data: questionRows } = eventTypeIds.length
-    ? await supabase
+  let questionRows: { id: string; event_type_id: string; label: string }[] = [];
+  if (eventTypeIds.length) {
+    try {
+      const { data } = await supabase
         .from("event_type_questions")
         .select("id, event_type_id, label")
         .in("event_type_id", eventTypeIds)
-        .order("position")
-    : { data: [] };
+        .order("position");
+      questionRows = (data ?? []) as typeof questionRows;
+    } catch {
+      // Migration not applied yet.
+    }
+  }
   const questionsByEvent = new Map<string, { id: string; label: string }[]>();
-  for (const q of (questionRows ?? []) as { id: string; event_type_id: string; label: string }[]) {
+  for (const q of questionRows) {
     const list = questionsByEvent.get(q.event_type_id) ?? [];
     list.push({ id: q.id, label: q.label });
     questionsByEvent.set(q.event_type_id, list);

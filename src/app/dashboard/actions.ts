@@ -99,6 +99,8 @@ export async function createEventType(formData: FormData) {
       max_bookings_per_day: formData.get("max_bookings_per_day")
         ? Math.max(1, num(formData.get("max_bookings_per_day")))
         : null,
+      max_attendees: Math.min(100, Math.max(1, num(formData.get("max_attendees"), 1))),
+      cancel_cutoff_hours: Math.max(0, num(formData.get("cancel_cutoff_hours"), 24)),
       price_paise: Math.round(priceRupees * 100),
       currency: "INR",
       location_type: String(formData.get("location_type") ?? "video"),
@@ -143,7 +145,13 @@ async function syncEventQuestions(
     position: number;
   }[]
 ) {
-  await supabase.from("event_type_questions").delete().eq("event_type_id", eventTypeId);
+  // If the migration hasn't been applied yet, the table won't exist — skip
+  // silently so event creation still succeeds.
+  const { error: delError } = await supabase
+    .from("event_type_questions")
+    .delete()
+    .eq("event_type_id", eventTypeId);
+  if (delError) return;
   const validTypes = ["text", "textarea", "select", "radio", "phone"];
   const rows = questions
     .filter((q) => q.label.trim() && validTypes.includes(q.field_type))
@@ -229,6 +237,8 @@ export async function updateEventType(id: string, formData: FormData) {
       max_bookings_per_day: formData.get("max_bookings_per_day")
         ? Math.max(1, num(formData.get("max_bookings_per_day")))
         : null,
+      max_attendees: Math.min(100, Math.max(1, num(formData.get("max_attendees"), 1))),
+      cancel_cutoff_hours: Math.max(0, num(formData.get("cancel_cutoff_hours"), 24)),
       price_paise: Math.round(priceRupees * 100),
       location_type: String(formData.get("location_type") ?? "video"),
       meeting_provider: String(formData.get("meeting_provider") ?? "google_meet"),

@@ -43,18 +43,32 @@ export default async function WorkflowsPage() {
   } = await supabase.auth.getUser();
   if (!user) return null;
 
-  const [{ data: workflows }, { data: webhooks }] = await Promise.all([
-    supabase
+  // Graceful when the workflows migration hasn't been applied yet.
+  let workflows: {
+    id: string;
+    name: string;
+    trigger: string;
+    offset_hours: number;
+    action: string;
+    action_config: Record<string, unknown>;
+    is_active: boolean;
+    created_at: string;
+  }[] = [];
+  try {
+    const { data } = await supabase
       .from("workflows")
       .select("id, name, trigger, offset_hours, action, action_config, is_active, created_at")
       .eq("owner_profile_id", user.id)
-      .order("created_at", { ascending: false }),
-    supabase
-      .from("webhook_endpoints")
-      .select("id, url")
-      .eq("owner_profile_id", user.id)
-      .eq("is_active", true),
-  ]);
+      .order("created_at", { ascending: false });
+    workflows = (data ?? []) as typeof workflows;
+  } catch {
+    // Migration not applied yet.
+  }
+  const { data: webhooks } = await supabase
+    .from("webhook_endpoints")
+    .select("id, url")
+    .eq("owner_profile_id", user.id)
+    .eq("is_active", true);
 
   return (
     <div className="mx-auto max-w-4xl">

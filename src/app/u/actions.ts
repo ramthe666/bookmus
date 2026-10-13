@@ -376,18 +376,23 @@ export async function getEventQuestions(
   }[]
 > {
   const supabase = await createClient();
-  const { data } = await supabase
-    .from("event_type_questions")
-    .select("id, label, field_type, is_required, options")
-    .eq("event_type_id", eventTypeId)
-    .order("position");
-  return ((data ?? []) as unknown as {
-    id: string;
-    label: string;
-    field_type: string;
-    is_required: boolean;
-    options: string[];
-  }[]).map((q) => ({ ...q, options: (q.options ?? []) as string[] }));
+  try {
+    const { data } = await supabase
+      .from("event_type_questions")
+      .select("id, label, field_type, is_required, options")
+      .eq("event_type_id", eventTypeId)
+      .order("position");
+    return ((data ?? []) as unknown as {
+      id: string;
+      label: string;
+      field_type: string;
+      is_required: boolean;
+      options: string[];
+    }[]).map((q) => ({ ...q, options: (q.options ?? []) as string[] }));
+  } catch {
+    // Migration not applied yet — no questions.
+    return [];
+  }
 }
 
 /** Dates in a month (1-12) that have at least one bookable slot. */

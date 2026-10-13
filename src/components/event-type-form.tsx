@@ -21,6 +21,8 @@ export interface EventTypeValues {
   min_notice_hours: number;
   max_ahead_days: number;
   max_bookings_per_day: string;
+  max_attendees: number;
+  cancel_cutoff_hours: number;
   price_rupees: string;
   location_type: string;
   meeting_provider: string;
@@ -325,6 +327,9 @@ export function EventTypeForm({
           </Field>
           <Field label="Max bookings / day" hint="Empty = unlimited.">
             <input name="max_bookings_per_day" type="number" min={1} defaultValue={initial.max_bookings_per_day} placeholder="Unlimited" className={inputCls} />
+          </Field>
+          <Field label="Cancel cutoff (hours)" hint="Guests can't cancel/reschedule within this window.">
+            <input name="cancel_cutoff_hours" type="number" min={0} defaultValue={initial.cancel_cutoff_hours} className={inputCls} />
           </Field>
         </div>
       </section>

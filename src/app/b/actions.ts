@@ -29,7 +29,7 @@ export async function cancelBookingByToken(
   const { data: booking } = await supabase
     .from("bookings")
     .select(
-      "id, status, starts_at, booker_email, event_types!inner(owner_profile_id)"
+      "id, status, starts_at, booker_email, event_types!inner(owner_profile_id, cancel_cutoff_hours)"
     )
     .eq("cancel_token", clean)
     .maybeSingle();
@@ -45,8 +45,18 @@ export async function cancelBookingByToken(
       "This booking can no longer be cancelled online. Please contact the host."
     );
   }
-  if (new Date(booking.starts_at as string).getTime() <= Date.now()) {
+  const startsAtMs = new Date(booking.starts_at as string).getTime();
+  if (startsAtMs <= Date.now()) {
     throw new Error("This appointment has already started or passed.");
+  }
+  const cutoffHours = Number(
+    (booking.event_types as unknown as { cancel_cutoff_hours?: number })
+      .cancel_cutoff_hours ?? 24
+  );
+  if (startsAtMs - Date.now() < cutoffHours * 3600000) {
+    throw new Error(
+      `Online cancellation is closed within ${cutoffHours}h of the start. Please contact the host.`
+    );
   }
 
   const cancelReason =
@@ -114,7 +124,7 @@ export async function rescheduleBookingByToken(
   const { data: booking } = await supabase
     .from("bookings")
     .select(
-      "id, status, starts_at, ends_at, booker_email, event_type_id, event_types!inner(owner_profile_id)"
+      "id, status, starts_at, ends_at, booker_email, event_type_id, event_types!inner(owner_profile_id, cancel_cutoff_hours)"
     )
     .eq("cancel_token", clean)
     .maybeSingle();
@@ -125,8 +135,18 @@ export async function rescheduleBookingByToken(
       "Only confirmed bookings can be rescheduled through this link. Please contact the host."
     );
   }
-  if (new Date(booking.starts_at as string).getTime() <= Date.now()) {
+  const startsAtMs = new Date(booking.starts_at as string).getTime();
+  if (startsAtMs <= Date.now()) {
     throw new Error("This appointment has already started or passed.");
+  }
+  const cutoffHours = Number(
+    (booking.event_types as unknown as { cancel_cutoff_hours?: number })
+      .cancel_cutoff_hours ?? 24
+  );
+  if (startsAtMs - Date.now() < cutoffHours * 3600000) {
+    throw new Error(
+      `Online rescheduling is closed within ${cutoffHours}h of the start. Please contact the host.`
+    );
   }
 
   const oldStartsAt = booking.starts_at as string;
