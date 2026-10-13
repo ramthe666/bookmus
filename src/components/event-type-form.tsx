@@ -19,6 +19,14 @@ export interface EventTypeValues {
   color: string;
   is_active: boolean;
   organization_id: string;
+  scheduling_mode: string;
+  host_ids: string[];
+}
+
+export interface TeamMemberOption {
+  orgId: string;
+  id: string;
+  name: string;
 }
 
 const inputCls =
@@ -48,13 +56,25 @@ export function EventTypeForm({
   action,
   submitLabel,
   organizations,
+  teamMembers,
 }: {
   initial: EventTypeValues;
   action: (formData: FormData) => Promise<void>;
   submitLabel: string;
   organizations?: { id: string; name: string }[];
+  teamMembers?: TeamMemberOption[];
 }) {
   const [paid, setPaid] = useState(Number(initial.price_rupees) > 0);
+  const [orgId, setOrgId] = useState(initial.organization_id);
+  const [mode, setMode] = useState(initial.scheduling_mode || "single");
+  const [hostIds, setHostIds] = useState<string[]>(initial.host_ids);
+
+  const orgMembers = (teamMembers ?? []).filter((m) => m.orgId === orgId);
+  const showHosts = mode !== "single" && orgId !== "";
+
+  function toggleHost(id: string) {
+    setHostIds((h) => (h.includes(id) ? h.filter((x) => x !== id) : [...h, id]));
+  }
 
   return (
     <form action={action} className="space-y-8">
@@ -80,7 +100,8 @@ export function EventTypeForm({
             >
               <select
                 name="organization_id"
-                defaultValue={initial.organization_id}
+                value={orgId}
+                onChange={(e) => setOrgId(e.target.value)}
                 className={inputCls}
               >
                 <option value="">Personal (only me)</option>
@@ -91,6 +112,59 @@ export function EventTypeForm({
                 ))}
               </select>
             </Field>
+          )}
+          <Field
+            label="Scheduling"
+            hint={
+              mode === "round_robin"
+                ? "Bookings rotate across hosts — each slot shows if any host is free."
+                : mode === "collective"
+                  ? "All hosts must be free — every booking blocks the whole team."
+                  : "One host (you)."
+            }
+          >
+            <select
+              name="scheduling_mode"
+              value={mode}
+              onChange={(e) => setMode(e.target.value)}
+              className={inputCls}
+            >
+              <option value="single">Single host</option>
+              <option value="round_robin">Round robin (team)</option>
+              <option value="collective">Collective (team)</option>
+            </select>
+          </Field>
+          {showHosts && (
+            <div className="sm:col-span-2">
+              <Field
+                label="Hosts"
+                hint="Who can take bookings for this event. Each host uses their own availability."
+              >
+                <div className="space-y-2">
+                  {orgMembers.length === 0 && (
+                    <p className="text-xs text-slate-400">
+                      No team members in this workspace yet — invite them from
+                      the Team page.
+                    </p>
+                  )}
+                  {orgMembers.map((m) => (
+                    <label
+                      key={m.id}
+                      className="flex items-center gap-2.5 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={hostIds.includes(m.id)}
+                        onChange={() => toggleHost(m.id)}
+                        className="accent-indigo-600"
+                      />
+                      {m.name}
+                    </label>
+                  ))}
+                </div>
+              </Field>
+              <input type="hidden" name="host_ids" value={JSON.stringify(hostIds)} />
+            </div>
           )}
           <Field label="Color">
             <input name="color" type="color" defaultValue={initial.color} className="h-11 w-20 cursor-pointer rounded-lg border border-slate-300" />

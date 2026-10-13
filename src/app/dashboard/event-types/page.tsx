@@ -64,7 +64,7 @@ export default async function EventTypesPage() {
   let query = supabase
     .from("event_types")
     .select(
-      "id, title, slug, description, duration_minutes, price_paise, is_active, color, organization_id, organizations(name)"
+      "id, title, slug, description, duration_minutes, price_paise, is_active, color, organization_id, scheduling_mode, organizations(name)"
     )
     .order("created_at", { ascending: false });
   if (orgList.length > 0) {
@@ -142,6 +142,13 @@ export default async function EventTypesPage() {
                       )
                     );
                   })()}
+                  {(et.scheduling_mode as string) !== "single" && (
+                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+                      {(et.scheduling_mode as string) === "round_robin"
+                        ? "Round robin"
+                        : "Collective"}
+                    </span>
+                  )}
                 </div>
                 <p className="mt-0.5 truncate text-sm text-slate-500">
                   {et.duration_minutes} min

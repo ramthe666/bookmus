@@ -72,35 +72,76 @@ export async function createEventType(formData: FormData) {
 
   const priceRupees = num(formData.get("price_rupees"), 0);
 
-  const { error } = await supabase.from("event_types").insert({
-    owner_profile_id: user.id,
-    organization_id: organizationId,
-    title,
-    slug,
-    description: String(formData.get("description") ?? "") || null,
-    duration_minutes: Math.max(5, num(formData.get("duration_minutes"), 30)),
-    buffer_before_minutes: Math.max(0, num(formData.get("buffer_before_minutes"))),
-    buffer_after_minutes: Math.max(0, num(formData.get("buffer_after_minutes"))),
-    min_notice_hours: Math.max(0, num(formData.get("min_notice_hours"))),
-    max_ahead_days: Math.max(1, num(formData.get("max_ahead_days"), 60)),
-    max_bookings_per_day: formData.get("max_bookings_per_day")
-      ? Math.max(1, num(formData.get("max_bookings_per_day")))
-      : null,
-    price_paise: Math.round(priceRupees * 100),
-    currency: "INR",
-    location_type: String(formData.get("location_type") ?? "video"),
-    meeting_provider: String(formData.get("meeting_provider") ?? "google_meet"),
-    color: String(formData.get("color") ?? "#4f46e5"),
-    is_active: formData.get("is_active") === "on",
-    schedule_id: schedule.id,
-  });
+  const schedulingMode = ["round_robin", "collective"].includes(
+    String(formData.get("scheduling_mode") ?? "")
+  )
+    ? String(formData.get("scheduling_mode"))
+    : "single";
+  const hostIds: string[] = JSON.parse(
+    String(formData.get("host_ids") ?? "[]")
+  );
+
+  const { data: created, error } = await supabase
+    .from("event_types")
+    .insert({
+      owner_profile_id: user.id,
+      organization_id: organizationId,
+      scheduling_mode: schedulingMode,
+      title,
+      slug,
+      description: String(formData.get("description") ?? "") || null,
+      duration_minutes: Math.max(5, num(formData.get("duration_minutes"), 30)),
+      buffer_before_minutes: Math.max(0, num(formData.get("buffer_before_minutes"))),
+      buffer_after_minutes: Math.max(0, num(formData.get("buffer_after_minutes"))),
+      min_notice_hours: Math.max(0, num(formData.get("min_notice_hours"))),
+      max_ahead_days: Math.max(1, num(formData.get("max_ahead_days"), 60)),
+      max_bookings_per_day: formData.get("max_bookings_per_day")
+        ? Math.max(1, num(formData.get("max_bookings_per_day")))
+        : null,
+      price_paise: Math.round(priceRupees * 100),
+      currency: "INR",
+      location_type: String(formData.get("location_type") ?? "video"),
+      meeting_provider: String(formData.get("meeting_provider") ?? "google_meet"),
+      color: String(formData.get("color") ?? "#4f46e5"),
+      is_active: formData.get("is_active") === "on",
+      schedule_id: schedule.id,
+    })
+    .select("id")
+    .single();
 
   if (error) {
     if (error.code === "23505") throw new Error("That URL slug is already taken.");
     throw new Error(error.message);
   }
+
+  await syncEventHosts(supabase, created.id as string, organizationId, schedulingMode, hostIds);
+
   revalidatePath("/dashboard/event-types");
   redirect("/dashboard/event-types");
+}
+
+/** Replace the host roster for an event type (validated against org membership). */
+async function syncEventHosts(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  eventTypeId: string,
+  organizationId: string | null,
+  schedulingMode: string,
+  hostIds: string[]
+) {
+  await supabase.from("event_type_hosts").delete().eq("event_type_id", eventTypeId);
+  if (schedulingMode === "single" || !organizationId || !hostIds.length) return;
+  const { data: members } = await supabase
+    .from("organization_members")
+    .select("profile_id")
+    .eq("organization_id", organizationId)
+    .in("profile_id", hostIds);
+  const valid = new Set((members ?? []).map((m) => m.profile_id as string));
+  const rows = hostIds
+    .filter((id) => valid.has(id))
+    .map((id, i) => ({ event_type_id: eventTypeId, profile_id: id, position: i }));
+  if (rows.length) {
+    await supabase.from("event_type_hosts").insert(rows);
+  }
 }
 
 export async function updateEventType(id: string, formData: FormData) {
@@ -122,11 +163,21 @@ export async function updateEventType(id: string, formData: FormData) {
     if (!membership) throw new Error("You are not a member of that workspace.");
   }
 
+  const schedulingMode = ["round_robin", "collective"].includes(
+    String(formData.get("scheduling_mode") ?? "")
+  )
+    ? String(formData.get("scheduling_mode"))
+    : "single";
+  const hostIds: string[] = JSON.parse(
+    String(formData.get("host_ids") ?? "[]")
+  );
+
   const { error } = await supabase
     .from("event_types")
     .update({
       title,
       organization_id: organizationId,
+      scheduling_mode: schedulingMode,
       slug: slugify(String(formData.get("slug") ?? "") || title),
       description: String(formData.get("description") ?? "") || null,
       duration_minutes: Math.max(5, num(formData.get("duration_minutes"), 30)),
@@ -151,6 +202,9 @@ export async function updateEventType(id: string, formData: FormData) {
     if (error.code === "23505") throw new Error("That URL slug is already taken.");
     throw new Error(error.message);
   }
+
+  await syncEventHosts(supabase, id, organizationId, schedulingMode, hostIds);
+
   revalidatePath("/dashboard/event-types");
   redirect("/dashboard/event-types");
 }

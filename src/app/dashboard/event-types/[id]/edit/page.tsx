@@ -25,6 +25,12 @@ export default async function EditEventTypePage({
 
   if (!et) notFound();
 
+  const { data: hostRows } = await supabase
+    .from("event_type_hosts")
+    .select("profile_id")
+    .eq("event_type_id", id)
+    .order("position");
+
   const initial: EventTypeValues = {
     title: et.title,
     slug: et.slug,
@@ -41,9 +47,26 @@ export default async function EditEventTypePage({
     color: et.color,
     is_active: et.is_active,
     organization_id: (et.organization_id as string | null) ?? "",
+    scheduling_mode: (et.scheduling_mode as string) ?? "single",
+    host_ids: (hostRows ?? []).map((h) => h.profile_id as string),
   };
 
   const orgs = await getUserOrgs(supabase, user.id);
+  const { data: memberRows } = await supabase
+    .from("organization_members")
+    .select("organization_id, profile_id, profiles(display_name)")
+    .in(
+      "organization_id",
+      orgs.map((o) => o.organization_id)
+    );
+  const teamMembers = (memberRows ?? []).map((m) => {
+    const prof = m.profiles as unknown as { display_name: string | null } | null;
+    return {
+      orgId: m.organization_id as string,
+      id: m.profile_id as string,
+      name: prof?.display_name ?? "Team member",
+    };
+  });
   const update = updateEventType.bind(null, id);
 
   return (
@@ -61,6 +84,7 @@ export default async function EditEventTypePage({
             id: o.organization_id,
             name: o.organizations.name,
           }))}
+          teamMembers={teamMembers}
         />
       </div>
     </div>

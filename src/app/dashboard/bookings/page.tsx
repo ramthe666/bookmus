@@ -60,7 +60,7 @@ export default async function BookingsPage() {
   const { data: bookings } = await supabase
     .from("bookings")
     .select(
-      "id, starts_at, ends_at, status, booker_name, booker_email, cancel_token, calendar_sync_status, calendar_sync_error, event_types!inner(title)"
+      "id, starts_at, ends_at, status, booker_name, booker_email, cancel_token, calendar_sync_status, calendar_sync_error, assigned_profile_id, event_types!inner(title), assigned:profiles!bookings_assigned_profile_id_fkey(display_name)"
     )
     .order("starts_at", { ascending: false })
     .limit(200);
@@ -83,6 +83,9 @@ export default async function BookingsPage() {
           <ul className="divide-y divide-slate-100">
             {(bookings ?? []).map((b) => {
               const et = b.event_types as unknown as { title: string };
+              const assigned = b.assigned as unknown as {
+                display_name: string | null;
+              } | null;
               return (
                 <li
                   key={b.id}
@@ -101,6 +104,11 @@ export default async function BookingsPage() {
                     </div>
                     <p className="mt-0.5 truncate text-sm text-slate-500">
                       {et.title} · {b.booker_email}
+                      {assigned?.display_name && (
+                        <span className="ml-1 text-indigo-600">
+                          · host: {assigned.display_name}
+                        </span>
+                      )}
                     </p>
                     {b.calendar_sync_status === "failed" && (
                       <p

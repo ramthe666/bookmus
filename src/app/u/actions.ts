@@ -21,6 +21,14 @@ import { triggerWebhooks } from "@/lib/webhooks";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { logAudit } from "@/lib/audit";
 
+interface HostSlotSource {
+  profileId: string;
+  displayName: string | null;
+  hostTimezone: string;
+  weeklyHours: WeeklyHours;
+  overrides: ScheduleOverride[];
+}
+
 interface SlotContext {
   id: string;
   duration_minutes: number;
@@ -36,6 +44,9 @@ interface SlotContext {
   weeklyHours: WeeklyHours;
   overrides: ScheduleOverride[];
   ownerProfileId: string;
+  schedulingMode: "single" | "round_robin" | "collective";
+  /** Availability sources. Single mode: exactly one (the owner). */
+  hosts: HostSlotSource[];
 }
 
 export async function getSlotContext(
@@ -46,7 +57,7 @@ export async function getSlotContext(
   const { data: et } = await supabase
     .from("event_types")
     .select(
-      "id, duration_minutes, buffer_before_minutes, buffer_after_minutes, min_notice_hours, max_ahead_days, max_bookings_per_day, price_paise, currency, meeting_provider, schedule_id, owner_profile_id"
+      "id, duration_minutes, buffer_before_minutes, buffer_after_minutes, min_notice_hours, max_ahead_days, max_bookings_per_day, price_paise, currency, meeting_provider, schedule_id, owner_profile_id, scheduling_mode"
     )
     .eq("id", eventTypeId)
     .eq("is_active", true)
@@ -79,6 +90,80 @@ export async function getSlotContext(
     }
   }
 
+  const schedulingMode = (
+    (et.scheduling_mode as string) === "round_robin" ||
+    (et.scheduling_mode as string) === "collective"
+      ? et.scheduling_mode
+      : "single"
+  ) as "single" | "round_robin" | "collective";
+
+  // Availability sources. Single mode: just the owner. Team modes: every
+  // assigned host, each with their own schedule (falling back to the
+  // event's schedule when a host hasn't set one up).
+  const hosts: HostSlotSource[] = [
+    {
+      profileId: et.owner_profile_id as string,
+      displayName: null,
+      hostTimezone,
+      weeklyHours,
+      overrides,
+    },
+  ];
+
+  if (schedulingMode !== "single") {
+    const { data: hostRows } = await supabase
+      .from("event_type_hosts")
+      .select("profile_id, position, profiles(display_name)")
+      .eq("event_type_id", eventTypeId)
+      .order("position");
+    if (hostRows?.length) {
+      const teamHosts: HostSlotSource[] = [];
+      for (const h of hostRows) {
+        const pid = h.profile_id as string;
+        const prof = h.profiles as unknown as {
+          display_name: string | null;
+        } | null;
+        // Each host's own default schedule.
+        const { data: hs } = await supabase
+          .from("availability_schedules")
+          .select("id, timezone, weekly_hours")
+          .eq("owner_profile_id", pid)
+          .order("created_at")
+          .limit(1)
+          .maybeSingle();
+        let hTz = hostTimezone;
+        let hHours = weeklyHours;
+        let hOverrides = overrides;
+        if (hs) {
+          hTz = (hs.timezone as string) ?? hTz;
+          hHours = ((hs.weekly_hours ?? {}) as WeeklyHours) ?? hHours;
+          const { data: hov } = await supabase
+            .from("schedule_overrides")
+            .select("date, is_unavailable, windows")
+            .eq("schedule_id", hs.id);
+          if (hov?.length) {
+            hOverrides = hov.map((o) => ({
+              date: o.date as string,
+              is_unavailable: o.is_unavailable as boolean,
+              windows: (o.windows ?? []) as ScheduleOverride["windows"],
+            }));
+          }
+        }
+        teamHosts.push({
+          profileId: pid,
+          displayName: prof?.display_name ?? null,
+          hostTimezone: hTz,
+          weeklyHours: hHours,
+          overrides: hOverrides,
+        });
+      }
+      // If hosts are configured, they replace the single-owner source.
+      // (The owner is included only if explicitly assigned.)
+      hosts.length = 0;
+      hosts.push(...teamHosts);
+    }
+  }
+
   return {
     id: et.id,
     duration_minutes: et.duration_minutes,
@@ -94,6 +179,8 @@ export async function getSlotContext(
     weeklyHours,
     overrides,
     ownerProfileId: et.owner_profile_id as string,
+    schedulingMode,
+    hosts,
   };
 }
 
@@ -144,6 +231,137 @@ async function bookedRanges(
   return ranges;
 }
 
+/** Privacy-preserving busy ranges for one host (all their bookings). */
+async function hostBusyRanges(
+  profileId: string,
+  fromIso: string,
+  toIso: string
+): Promise<{ starts_at: string; ends_at: string }[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("get_host_busy_ranges", {
+    p_profile_id: profileId,
+    p_from: fromIso,
+    p_to: toIso,
+  });
+  if (error) throw new Error("Could not load availability.");
+  return (data ?? []) as { starts_at: string; ends_at: string }[];
+}
+
+/** Bookable slots for ONE host on a date (their schedule + their busy). */
+async function getHostSlotsForDate(
+  ctx: SlotContext,
+  host: HostSlotSource,
+  dateStr: string,
+  excludeRange?: { starts_at: string; ends_at: string }
+): Promise<Date[]> {
+  const supabase = await createClient();
+  const { getHostBusyBlocks } = await import("@/lib/integrations/calendar");
+
+  const fromIso = `${dateStr}T00:00:00Z`;
+  const toIso = `${dateStr}T23:59:59Z`;
+  let ranges = await hostBusyRanges(host.profileId, fromIso, toIso);
+  if (excludeRange) {
+    ranges = ranges.filter(
+      (r) =>
+        !(
+          r.starts_at === excludeRange.starts_at &&
+          r.ends_at === excludeRange.ends_at
+        )
+    );
+  }
+  // External busy blocks for this host (fail-safe: outage → no blocks).
+  try {
+    const busy = await getHostBusyBlocks(supabase, host.profileId, fromIso, toIso);
+    ranges.push(...busy);
+  } catch (e) {
+    console.error("External busy-time merge failed:", e);
+  }
+
+  return generateSlots({
+    dateStr,
+    hostTimezone: host.hostTimezone,
+    weeklyHours: host.weeklyHours,
+    overrides: host.overrides,
+    durationMin: ctx.duration_minutes,
+    bufferBeforeMin: ctx.buffer_before_minutes,
+    bufferAfterMin: ctx.buffer_after_minutes,
+    existingBookings: ranges,
+    minNoticeHours: ctx.min_notice_hours,
+    maxBookingsPerDay: ctx.max_bookings_per_day,
+  });
+}
+
+/**
+ * Merged bookable slots for a date across all availability sources.
+ * - single: the owner's slots (unchanged behavior).
+ * - round_robin: union — bookable if ANY host is free.
+ * - collective: intersection — bookable only if ALL hosts are free.
+ */
+async function getMergedSlotsForDate(
+  ctx: SlotContext,
+  dateStr: string,
+  excludeRange?: { starts_at: string; ends_at: string }
+): Promise<Date[]> {
+  const perHost: Date[][] = [];
+  for (const h of ctx.hosts) {
+    perHost.push(await getHostSlotsForDate(ctx, h, dateStr, excludeRange));
+  }
+
+  if (ctx.schedulingMode === "collective" && perHost.length > 0) {
+    const sets = perHost.map(
+      (slots) => new Set(slots.map((d) => d.toISOString()))
+    );
+    return perHost[0].filter((d) =>
+      sets.every((set) => set.has(d.toISOString()))
+    );
+  }
+  // single + round_robin: union, deduped, chronological.
+  const seen = new Map<string, Date>();
+  for (const slots of perHost) {
+    for (const d of slots) seen.set(d.toISOString(), d);
+  }
+  return [...seen.values()].sort((a, b) => a.getTime() - b.getTime());
+}
+
+/**
+ * Round-robin assignment: among hosts free at the wanted instant, pick the
+ * one with the fewest confirmed bookings in the last 30 days (fair
+ * distribution). Ties break by host position.
+ */
+async function pickRoundRobinHost(
+  ctx: SlotContext,
+  startsAtIso: string
+): Promise<string | null> {
+  const wanted = new Date(startsAtIso).toISOString();
+  const dateStr = toDateStrInTz(new Date(startsAtIso), ctx.hostTimezone);
+  const freeHosts: HostSlotSource[] = [];
+  for (const h of ctx.hosts) {
+    const slots = await getHostSlotsForDate(ctx, h, dateStr);
+    if (slots.some((s) => s.toISOString() === wanted)) freeHosts.push(h);
+  }
+  if (freeHosts.length === 0) return null;
+
+  const supabase = await createClient();
+  const since = new Date(Date.now() - 30 * 86400000).toISOString();
+  let best: HostSlotSource | null = null;
+  let bestCount = Number.MAX_SAFE_INTEGER;
+  for (const h of freeHosts) {
+    const { count } = await supabase
+      .from("bookings")
+      .select("id", { count: "exact", head: true })
+      .eq("event_type_id", ctx.id)
+      .eq("assigned_profile_id", h.profileId)
+      .eq("status", "confirmed")
+      .gte("created_at", since);
+    const c = count ?? 0;
+    if (c < bestCount) {
+      bestCount = c;
+      best = h;
+    }
+  }
+  return best?.profileId ?? freeHosts[0].profileId;
+}
+
 /** Dates in a month (1-12) that have at least one bookable slot. */
 export async function getMonthAvailability(
   eventTypeId: string,
@@ -155,30 +373,11 @@ export async function getMonthAvailability(
 
   const mm = String(month).padStart(2, "0");
   const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
-  const fromIso = `${year}-${mm}-01T00:00:00Z`;
-  const toIso = `${year}-${mm}-${String(lastDay).padStart(2, "0")}T23:59:59Z`;
-  const ranges = await bookedRanges(
-    eventTypeId,
-    fromIso,
-    toIso,
-    ctx.ownerProfileId
-  );
 
   const result: Record<string, number> = {};
   for (let d = 1; d <= lastDay; d++) {
     const dateStr = `${year}-${mm}-${String(d).padStart(2, "0")}`;
-    const slots = generateSlots({
-      dateStr,
-      hostTimezone: ctx.hostTimezone,
-      weeklyHours: ctx.weeklyHours,
-      overrides: ctx.overrides,
-      durationMin: ctx.duration_minutes,
-      bufferBeforeMin: ctx.buffer_before_minutes,
-      bufferAfterMin: ctx.buffer_after_minutes,
-      existingBookings: ranges,
-      minNoticeHours: ctx.min_notice_hours,
-      maxBookingsPerDay: ctx.max_bookings_per_day,
-    });
+    const slots = await getMergedSlotsForDate(ctx, dateStr);
     if (slots.length > 0) result[dateStr] = slots.length;
   }
   return result;
@@ -192,24 +391,7 @@ export async function getSlotsForDate(
   const ctx = await getSlotContext(eventTypeId);
   if (!ctx) return [];
 
-  const ranges = await bookedRanges(
-    eventTypeId,
-    `${dateStr}T00:00:00Z`,
-    `${dateStr}T23:59:59Z`,
-    ctx.ownerProfileId
-  );
-  const slots = generateSlots({
-    dateStr,
-    hostTimezone: ctx.hostTimezone,
-    weeklyHours: ctx.weeklyHours,
-    overrides: ctx.overrides,
-    durationMin: ctx.duration_minutes,
-    bufferBeforeMin: ctx.buffer_before_minutes,
-    bufferAfterMin: ctx.buffer_after_minutes,
-    existingBookings: ranges,
-    minNoticeHours: ctx.min_notice_hours,
-    maxBookingsPerDay: ctx.max_bookings_per_day,
-  });
+  const slots = await getMergedSlotsForDate(ctx, dateStr);
   return slots.map((s) => s.toISOString());
 }
 
@@ -226,25 +408,7 @@ export async function validateSlotAvailable(
   const ctx = await getSlotContext(eventTypeId);
   if (!ctx) throw new Error("This event is no longer available.");
   const dateStr = toDateStrInTz(new Date(startsAtIso), ctx.hostTimezone);
-  const ranges = await bookedRanges(
-    eventTypeId,
-    `${dateStr}T00:00:00Z`,
-    `${dateStr}T23:59:59Z`,
-    ctx.ownerProfileId,
-    excludeRange
-  );
-  const slots = generateSlots({
-    dateStr,
-    hostTimezone: ctx.hostTimezone,
-    weeklyHours: ctx.weeklyHours,
-    overrides: ctx.overrides,
-    durationMin: ctx.duration_minutes,
-    bufferBeforeMin: ctx.buffer_before_minutes,
-    bufferAfterMin: ctx.buffer_after_minutes,
-    existingBookings: ranges,
-    minNoticeHours: ctx.min_notice_hours,
-    maxBookingsPerDay: ctx.max_bookings_per_day,
-  });
+  const slots = await getMergedSlotsForDate(ctx, dateStr, excludeRange);
   const wanted = new Date(startsAtIso).toISOString();
   if (!slots.some((s) => s.toISOString() === wanted)) {
     throw new Error("That time is not available — please pick another slot.");
@@ -296,6 +460,18 @@ export async function createBooking(
   const startsAt = new Date(wanted);
   const endsAt = new Date(startsAt.getTime() + ctx.duration_minutes * 60000);
 
+  // Host assignment for team events (spec §5).
+  let assignedProfileId: string | null = null;
+  if (ctx.schedulingMode === "round_robin") {
+    assignedProfileId = await pickRoundRobinHost(ctx, wanted);
+    if (!assignedProfileId) {
+      throw new Error("That time is not available — please pick another slot.");
+    }
+  } else if (ctx.schedulingMode === "single") {
+    assignedProfileId = ctx.ownerProfileId;
+  }
+  // collective → null (all hosts).
+
   // Paid events start as a pending hold; they confirm only after verified
   // payment (spec §7.1). Free events — or paid events while Razorpay is not
   // configured (host follows up manually) — confirm immediately.
@@ -309,6 +485,7 @@ export async function createBooking(
       ends_at: endsAt.toISOString(),
       timezone: ctx.hostTimezone,
       status: needsPayment ? "pending" : "confirmed",
+      assigned_profile_id: assignedProfileId,
       booker_name: name,
       booker_email: email,
       booker_phone: input.phone?.trim() || null,
