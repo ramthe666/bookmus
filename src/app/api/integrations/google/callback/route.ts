@@ -89,7 +89,12 @@ export async function GET(request: Request) {
       `${origin}/dashboard/integrations?connected=google`
     );
   } catch (e) {
-    console.error("Google OAuth callback failed:", e);
+    // Log message only — never the full error, which could carry
+    // token-adjacent data (spec §10.2).
+    console.error(
+      "Google OAuth callback failed:",
+      e instanceof Error ? e.message : "unknown"
+    );
     return NextResponse.redirect(
       `${origin}/dashboard/integrations?error=oauth_failed`
     );

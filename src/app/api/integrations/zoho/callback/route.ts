@@ -73,7 +73,12 @@ export async function GET(request: Request) {
       `${origin}/dashboard/integrations?connected=zoho`
     );
   } catch (e) {
-    console.error("Zoho OAuth callback failed:", e);
+    // Log message only — never the full error, which could carry
+    // token-adjacent data (spec §10.2).
+    console.error(
+      "Zoho OAuth callback failed:",
+      e instanceof Error ? e.message : "unknown"
+    );
     return NextResponse.redirect(
       `${origin}/dashboard/integrations?error=oauth_failed`
     );
