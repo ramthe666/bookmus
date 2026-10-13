@@ -47,10 +47,10 @@ No existing migrations were modified; all proposed schema work is additive.
 | Customer portal / manage booking | ❌ | — |
 | Rebook flow | ❌ | — |
 | Manual booking by staff (conflict override w/ audit) | ❌ | — |
-| Email template editor (versioned) | ❌ | Templates hardcoded in `src/lib/email.ts` |
+| Email template editor (versioned) | ❌ | Templates hardcoded in `src/lib/email.ts` — next |
 | Booking-page builder (theme/sections/publish) | ❌ | Public page is fixed layout |
-| CRM (contacts, consent, sync) | ❌ | `booking_attendees` only; no customer directory |
-| Reports (funnel, utilization, no-show, revenue) | ❌ | Overview shows basic counts only |
+| CRM (contacts, consent, sync) | ⚠️ | Customer directory + detail + private notes live (`/dashboard/customers`, `customer_notes` table, 2026-10-13); provider sync not started |
+| Reports (funnel, utilization, no-show, revenue) | ⚠️ | `/dashboard/reports`: volume chart, cancellation/no-show rates, captured revenue, payment success, documented metric definitions (2026-10-13); funnel + utilization not yet |
 | Outgoing webhooks | ❌ | — |
 | Reschedule/cancel policy engine | ❌ | — |
 | Notification delivery center (queued/sent/failed) | ⚠️ | `notification_log` written; no UI, no retry controls |
