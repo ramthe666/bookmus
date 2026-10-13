@@ -41,6 +41,11 @@ const nav = [
     d: "M3 3v18h18M8 17v-6M13 17V7M18 17v-3",
   },
   {
+    href: "/dashboard/page-builder",
+    label: "Page builder",
+    d: "M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z",
+  },
+  {
     href: "/dashboard/integrations",
     label: "Integrations",
     d: "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71",

@@ -48,7 +48,7 @@ No existing migrations were modified; all proposed schema work is additive.
 | Rebook flow | ❌ | — |
 | Manual booking by staff (conflict override w/ audit) | ❌ | — |
 | Email template editor (versioned) | ✅ | `email_templates` table + studio (`/dashboard/settings/templates`): merge fields, live preview, version history, rollback; worker prefers custom template, falls back to built-in (2026-10-13) |
-| Booking-page builder (theme/sections/publish) | ❌ | Public page is fixed layout |
+| Booking-page builder (theme/sections/publish) | ✅ | `booking_pages` + `booking_page_versions` (migration `20261013220000`); builder at `/dashboard/page-builder` with live preview, accent color, dark theme, event reorder/hide, publish + version history + rollback; public page renders published config only (draft never exposed) (2026-10-13) |
 | CRM (contacts, consent, sync) | ⚠️ | Customer directory + detail + private notes live (`/dashboard/customers`, `customer_notes` table, 2026-10-13); provider sync not started |
 | Reports (funnel, utilization, no-show, revenue) | ⚠️ | `/dashboard/reports`: volume chart, cancellation/no-show rates, captured revenue, payment success, documented metric definitions (2026-10-13); funnel + utilization not yet |
 | Outgoing webhooks | ✅ | `webhook_endpoints` + `webhook_deliveries` (migration `20261013210000`); HMAC-SHA256 signed deliveries through the outbox with retries + failure log; triggers on booking created/confirmed/cancelled/rescheduled and payment captured/failed; settings UI with secret reveal, pause/resume, delivery log (2026-10-13) |
@@ -92,7 +92,7 @@ Per spec §15.1 (small vertical slices, additive migrations only):
 7. ✅ **Outbox** (2026-10-13)
 8. ✅ **Busy-time integration** (2026-10-13)
 9. ✅ **Internal calendar week view** + sync-health indicators (2026-10-13)
-10. Roles/workspaces/staff, page builder, template editor, CRM, reports (spec phases 5–8)
+10. ✅ Page builder, ✅ template editor, ✅ CRM basics, ✅ reports (2026-10-13). Remaining: roles/workspaces/staff
 
 Each slice ships with: UI states (loading/empty/error), server enforcement, and a
 manual end-to-end check on the Vercel deployment before the next slice starts.
