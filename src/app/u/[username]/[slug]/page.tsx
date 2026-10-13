@@ -37,8 +37,10 @@ export default async function BookEventPage({
     .eq("owner_profile_id", profile.id)
     .eq("slug", slug)
     .eq("is_active", true)
-    .eq("is_private", false)
     .maybeSingle();
+  // Note: no is_private filter — secret events are bookable via direct
+  // link (the URL is the secret). They are hidden from the /u/[username]
+  // listing instead.
   if (!et) notFound();
 
   const initials = (profile.display_name ?? profile.username ?? "?")

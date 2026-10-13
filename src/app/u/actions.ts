@@ -61,8 +61,9 @@ export async function getSlotContext(
     )
     .eq("id", eventTypeId)
     .eq("is_active", true)
-    .eq("is_private", false)
     .maybeSingle();
+  // Note: no is_private filter — secret events are bookable via direct
+  // link or embed (the URL is the secret).
   if (!et) return null;
 
   let hostTimezone = "Asia/Kolkata";
@@ -577,6 +578,17 @@ export async function createBooking(
     starts_at: input.startsAtIso,
     booker_email: input.email,
     status: needsPayment ? "pending" : "confirmed",
+  });
+
+  // Workflows: user-defined automations (trigger → action).
+  const { fireWorkflowTrigger } = await import("@/lib/workflows");
+  await fireWorkflowTrigger(supabase, "booking.created", {
+    id: data.id,
+    owner_profile_id: ctx.ownerProfileId,
+    booker_name: name,
+    booker_email: email,
+    starts_at: startsAt.toISOString(),
+    ends_at: endsAt.toISOString(),
   });
 
   return result;

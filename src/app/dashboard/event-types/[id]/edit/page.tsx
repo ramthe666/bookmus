@@ -46,6 +46,7 @@ export default async function EditEventTypePage({
     meeting_provider: et.meeting_provider,
     color: et.color,
     is_active: et.is_active,
+    is_private: (et.is_private as boolean) ?? false,
     organization_id: (et.organization_id as string | null) ?? "",
     scheduling_mode: (et.scheduling_mode as string) ?? "single",
     host_ids: (hostRows ?? []).map((h) => h.profile_id as string),

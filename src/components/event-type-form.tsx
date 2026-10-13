@@ -18,6 +18,7 @@ export interface EventTypeValues {
   meeting_provider: string;
   color: string;
   is_active: boolean;
+  is_private: boolean;
   organization_id: string;
   scheduling_mode: string;
   host_ids: string[];
@@ -172,6 +173,15 @@ export function EventTypeForm({
           <label className="flex items-center gap-3 pt-6 text-sm font-medium text-slate-700">
             <input name="is_active" type="checkbox" defaultChecked={initial.is_active} className="h-4 w-4 rounded accent-indigo-600" />
             Active — bookable on your public page
+          </label>
+          <label className="flex items-start gap-3 pt-2 text-sm font-medium text-slate-700">
+            <input name="is_private" type="checkbox" defaultChecked={initial.is_private} className="mt-0.5 h-4 w-4 rounded accent-indigo-600" />
+            <span>
+              Secret event
+              <span className="block text-xs font-normal text-slate-500">
+                Hidden from your public page — only people with the direct link (or embed) can book.
+              </span>
+            </span>
           </label>
         </div>
       </section>

@@ -61,6 +61,11 @@ const nav = [
     d: "M3 12h4l3 8 4-16 3 8h4",
   },
   {
+    href: "/dashboard/workflows",
+    label: "Workflows",
+    d: "M13 2 3 14h7l-1 8 10-12h-7l1-8Z",
+  },
+  {
     href: "/dashboard/settings",
     label: "Settings",
     d: "M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6",

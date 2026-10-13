@@ -105,6 +105,7 @@ export async function createEventType(formData: FormData) {
       meeting_provider: String(formData.get("meeting_provider") ?? "google_meet"),
       color: String(formData.get("color") ?? "#4f46e5"),
       is_active: formData.get("is_active") === "on",
+      is_private: formData.get("is_private") === "on",
       schedule_id: schedule.id,
     })
     .select("id")
@@ -194,6 +195,7 @@ export async function updateEventType(id: string, formData: FormData) {
       meeting_provider: String(formData.get("meeting_provider") ?? "google_meet"),
       color: String(formData.get("color") ?? "#4f46e5"),
       is_active: formData.get("is_active") === "on",
+      is_private: formData.get("is_private") === "on",
     })
     .eq("id", id);
   // Ownership enforced by RLS (can_manage_event_type) — team members can
@@ -308,6 +310,15 @@ export async function cancelBooking(id: string) {
     booking_id: id,
     via: "dashboard",
   });
+  const { fireWorkflowTrigger } = await import("@/lib/workflows");
+  await fireWorkflowTrigger(supabase, "booking.cancelled", {
+    id,
+    owner_profile_id: user.id,
+    booker_name: (booking?.booker_name as string | undefined) ?? "",
+    booker_email: (booking?.booker_email as string | undefined) ?? "",
+    starts_at: (booking?.starts_at as string | undefined) ?? "",
+    ends_at: (booking?.starts_at as string | undefined) ?? "",
+  });
 }
 
 /**
@@ -386,6 +397,15 @@ export async function rescheduleBooking(id: string, newStartsAtIso: string) {
     old_starts_at: oldStartsAt,
     new_starts_at: newStart.toISOString(),
     via: "dashboard",
+  });
+  const { fireWorkflowTrigger: fireRescheduled } = await import("@/lib/workflows");
+  await fireRescheduled(supabase, "booking.rescheduled", {
+    id,
+    owner_profile_id: user.id,
+    booker_name: "",
+    booker_email: (booking.booker_email as string | undefined) ?? "",
+    starts_at: newStart.toISOString(),
+    ends_at: newEnd.toISOString(),
   });
 
   revalidatePath("/dashboard/bookings");
@@ -601,6 +621,15 @@ export async function createManualBooking(input: {
     booker_email: email,
     status: "confirmed",
     manual: true,
+  });
+  const { fireWorkflowTrigger: fireManual } = await import("@/lib/workflows");
+  await fireManual(supabase, "booking.created", {
+    id: data.id as string,
+    owner_profile_id: user.id,
+    booker_name: input.name.trim(),
+    booker_email: email,
+    starts_at: startsAt.toISOString(),
+    ends_at: new Date(startsAt.getTime() + 30 * 60000).toISOString(),
   });
 
   revalidatePath("/dashboard/bookings");

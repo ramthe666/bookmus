@@ -143,6 +143,8 @@ export async function GET(request: Request) {
 
   const expired = await expireStaleHolds(supabase);
   const remindersEnqueued = await enqueueDueReminders(supabase);
+  const { evaluateTimeWorkflows } = await import("@/lib/workflows");
+  await evaluateTimeWorkflows(supabase);
   const outbox = await processOutbox(supabase, 25);
   const reconciled = await reconcileMissedWork(supabase);
 

@@ -83,6 +83,16 @@ export async function cancelBookingByToken(
     via: "guest_link",
   });
 
+  const { fireWorkflowTrigger } = await import("@/lib/workflows");
+  await fireWorkflowTrigger(supabase, "booking.cancelled", {
+    id: booking.id as string,
+    owner_profile_id: et.owner_profile_id,
+    booker_name: "",
+    booker_email: (booking.booker_email as string) ?? "",
+    starts_at: (booking.starts_at as string) ?? "",
+    ends_at: (booking.starts_at as string) ?? "",
+  });
+
   return { ok: true };
 }
 
@@ -173,6 +183,16 @@ export async function rescheduleBookingByToken(
     old_starts_at: oldStartsAt,
     new_starts_at: newStart.toISOString(),
     via: "guest_link",
+  });
+
+  const { fireWorkflowTrigger: fireGuestRescheduled } = await import("@/lib/workflows");
+  await fireGuestRescheduled(supabase, "booking.rescheduled", {
+    id: booking.id as string,
+    owner_profile_id: et.owner_profile_id,
+    booker_name: "",
+    booker_email: (booking.booker_email as string) ?? "",
+    starts_at: newStart.toISOString(),
+    ends_at: newStart.toISOString(),
   });
 
   return { ok: true, newStartsAtIso: newStart.toISOString() };

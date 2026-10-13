@@ -92,7 +92,7 @@ Per spec §15.1 (small vertical slices, additive migrations only):
 7. ✅ **Outbox** (2026-10-13)
 8. ✅ **Busy-time integration** (2026-10-13)
 9. ✅ **Internal calendar week view** + sync-health indicators (2026-10-13)
-10. ✅ Page builder, ✅ template editor, ✅ CRM basics, ✅ reports, ✅ teams/roles phase 1, ✅ round-robin/collective scheduling, ✅ manual staff booking, ✅ day/month/agenda calendar views (2026-10-13)
+10. ✅ Page builder, ✅ template editor, ✅ CRM basics, ✅ reports, ✅ teams/roles phase 1, ✅ round-robin/collective scheduling, ✅ manual staff booking, ✅ day/month/agenda calendar views, ✅ workflows (trigger→action automations), ✅ embeddable booking widget, ✅ secret events (2026-10-13)
 
 Each slice ships with: UI states (loading/empty/error), server enforcement, and a
 manual end-to-end check on the Vercel deployment before the next slice starts.

@@ -121,10 +121,18 @@ export function BookingWidget(props: BookingWidgetProps) {
   } = props;
 
   const [step, setStep] = useState<Step>("schedule");
-  const [guestTz] = useState(
+  const [guestTz, setGuestTz] = useState(
     () =>
       Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Kolkata"
   );
+  const [tzOpen, setTzOpen] = useState(false);
+  const allTimezones = useMemo(() => {
+    try {
+      return (Intl as unknown as { supportedValuesOf: (k: string) => string[] }).supportedValuesOf("timeZone");
+    } catch {
+      return [guestTz];
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const todayStr = useMemo(
     () => toDateStrInTz(new Date(), hostTimezone),
@@ -540,9 +548,36 @@ export function BookingWidget(props: BookingWidgetProps) {
           )}
         </div>
         <p className="mt-5 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">
-          Times shown in your timezone
-          <span className="font-medium text-slate-700"> ({guestTz})</span>
+          Times shown in{" "}
+          <button
+            type="button"
+            onClick={() => setTzOpen((o) => !o)}
+            className="font-medium text-indigo-600 hover:text-indigo-800"
+          >
+            {guestTz} ▾
+          </button>
         </p>
+        {tzOpen && (
+          <div className="mt-2 max-h-44 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-sm">
+            {allTimezones.map((tz) => (
+              <button
+                key={tz}
+                type="button"
+                onClick={() => {
+                  setGuestTz(tz);
+                  setTzOpen(false);
+                  setSelectedDate(null);
+                  setSelectedSlot(null);
+                }}
+                className={`block w-full px-3 py-1.5 text-left text-xs hover:bg-indigo-50 ${
+                  tz === guestTz ? "font-semibold text-indigo-700" : "text-slate-600"
+                }`}
+              >
+                {tz}
+              </button>
+            ))}
+          </div>
+        )}
       </aside>
 
       <div className="rounded-3xl border border-slate-200 bg-white p-7">

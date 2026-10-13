@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { EmbedSnippet } from "./embed-snippet";
 import { deleteEventType, toggleEventType } from "../actions";
 
 function DeleteButton({ id, title }: { id: string; title: string }) {
@@ -64,7 +65,7 @@ export default async function EventTypesPage() {
   let query = supabase
     .from("event_types")
     .select(
-      "id, title, slug, description, duration_minutes, price_paise, is_active, color, organization_id, scheduling_mode, organizations(name)"
+      "id, title, slug, description, duration_minutes, price_paise, is_active, is_private, color, organization_id, scheduling_mode, organizations(name)"
     )
     .order("created_at", { ascending: false });
   if (orgList.length > 0) {
@@ -149,6 +150,11 @@ export default async function EventTypesPage() {
                         : "Collective"}
                     </span>
                   )}
+                  {(et.is_private as boolean) && (
+                    <span className="rounded-full bg-slate-800 px-2 py-0.5 text-xs font-medium text-white">
+                      Secret
+                    </span>
+                  )}
                 </div>
                 <p className="mt-0.5 truncate text-sm text-slate-500">
                   {et.duration_minutes} min
@@ -164,6 +170,12 @@ export default async function EventTypesPage() {
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <ToggleButton id={et.id} isActive={et.is_active} />
+                {link && profile?.username && (
+                  <EmbedSnippet
+                    username={profile.username as string}
+                    slug={et.slug as string}
+                  />
+                )}
                 {link && (
                   <Link
                     href={link}
