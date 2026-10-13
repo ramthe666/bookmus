@@ -10,6 +10,7 @@ import {
 import { logAudit } from "@/lib/audit";
 import { deleteSyncedBooking } from "@/lib/calendar-sync";
 import { enqueueOutbox } from "@/lib/outbox-enqueue";
+import { resolveCustomTemplate } from "@/lib/email-templates";
 
 /**
  * Shared booking-lifecycle transitions (spec §7).
@@ -125,18 +126,32 @@ export async function sendConfirmationForBooking(
     if (!isEmailConfigured()) return;
     const ctx = await loadMailContext(supabase, bookingId);
     if (!ctx) return;
+    const context = {
+      host_name: ctx.host_name,
+      event_title: ctx.event_title,
+      when_text: formatWhen(ctx.starts_at, ctx.booker_timezone),
+      booker_name: ctx.booker_name,
+      meeting_url: ctx.meeting_url,
+      cancel_url: cancelUrlFor(ctx.cancel_token),
+    };
+    const custom = await resolveCustomTemplate(
+      supabase,
+      ctx.owner_profile_id,
+      "booking_confirmation",
+      context
+    );
     const mail = bookingConfirmationEmail({
       hostName: ctx.host_name,
       eventTitle: ctx.event_title,
-      whenText: formatWhen(ctx.starts_at, ctx.booker_timezone),
+      whenText: context.when_text,
       bookerName: ctx.booker_name,
       meetingUrl: ctx.meeting_url,
-      cancelUrl: cancelUrlFor(ctx.cancel_token),
+      cancelUrl: context.cancel_url,
     });
     const sent = await sendEmail({
       to: ctx.booker_email,
-      subject: mail.subject,
-      html: mail.html,
+      subject: custom?.subject ?? mail.subject,
+      html: custom?.html ?? mail.html,
     });
     await logNotification(supabase, {
       bookingId: ctx.id,
@@ -160,16 +175,30 @@ export async function sendCancellationForBooking(
     if (!isEmailConfigured()) return;
     const ctx = await loadMailContext(supabase, bookingId);
     if (!ctx) return;
+    const context = {
+      host_name: ctx.host_name,
+      event_title: ctx.event_title,
+      when_text: formatWhen(ctx.starts_at, ctx.booker_timezone),
+      booker_name: ctx.booker_name,
+      meeting_url: ctx.meeting_url,
+      cancel_url: cancelUrlFor(ctx.cancel_token),
+    };
+    const custom = await resolveCustomTemplate(
+      supabase,
+      ctx.owner_profile_id,
+      "booking_cancellation",
+      context
+    );
     const mail = bookingCancellationEmail({
       hostName: ctx.host_name,
       eventTitle: ctx.event_title,
-      whenText: formatWhen(ctx.starts_at, ctx.booker_timezone),
+      whenText: context.when_text,
       bookerName: ctx.booker_name,
     });
     const sent = await sendEmail({
       to: ctx.booker_email,
-      subject: mail.subject,
-      html: mail.html,
+      subject: custom?.subject ?? mail.subject,
+      html: custom?.html ?? mail.html,
     });
     await logNotification(supabase, {
       bookingId: ctx.id,
@@ -331,17 +360,31 @@ export async function sendReminderForBooking(
     if (!b || b.status !== "confirmed") return;
     const ctx = await loadMailContext(supabase, bookingId);
     if (!ctx) return;
+    const context = {
+      host_name: ctx.host_name,
+      event_title: ctx.event_title,
+      when_text: formatWhen(ctx.starts_at, ctx.booker_timezone),
+      booker_name: ctx.booker_name,
+      meeting_url: ctx.meeting_url,
+      cancel_url: cancelUrlFor(ctx.cancel_token),
+    };
+    const custom = await resolveCustomTemplate(
+      supabase,
+      ctx.owner_profile_id,
+      "booking_reminder",
+      context
+    );
     const mail = bookingReminderEmail({
       hostName: ctx.host_name,
       eventTitle: ctx.event_title,
-      whenText: formatWhen(ctx.starts_at, ctx.booker_timezone),
+      whenText: context.when_text,
       bookerName: ctx.booker_name,
       meetingUrl: ctx.meeting_url,
     });
     const sent = await sendEmail({
       to: ctx.booker_email,
-      subject: mail.subject,
-      html: mail.html,
+      subject: custom?.subject ?? mail.subject,
+      html: custom?.html ?? mail.html,
     });
     await logNotification(supabase, {
       bookingId: ctx.id,
@@ -367,20 +410,36 @@ export async function sendRescheduledForBooking(
     if (!isEmailConfigured()) return;
     const ctx = await loadMailContext(supabase, bookingId);
     if (!ctx) return;
+    const context = {
+      host_name: ctx.host_name,
+      event_title: ctx.event_title,
+      when_text: formatWhen(ctx.starts_at, ctx.booker_timezone),
+      old_when_text: formatWhen(oldStartsAtIso, ctx.booker_timezone),
+      new_when_text: formatWhen(ctx.starts_at, ctx.booker_timezone),
+      booker_name: ctx.booker_name,
+      meeting_url: ctx.meeting_url,
+      cancel_url: cancelUrlFor(ctx.cancel_token),
+    };
+    const custom = await resolveCustomTemplate(
+      supabase,
+      ctx.owner_profile_id,
+      "booking_rescheduled",
+      context
+    );
     const mail = bookingRescheduledEmail({
       hostName: ctx.host_name,
       eventTitle: ctx.event_title,
-      whenText: formatWhen(ctx.starts_at, ctx.booker_timezone),
-      oldWhenText: formatWhen(oldStartsAtIso, ctx.booker_timezone),
-      newWhenText: formatWhen(ctx.starts_at, ctx.booker_timezone),
+      whenText: context.when_text,
+      oldWhenText: context.old_when_text,
+      newWhenText: context.new_when_text,
       bookerName: ctx.booker_name,
       meetingUrl: ctx.meeting_url,
-      cancelUrl: cancelUrlFor(ctx.cancel_token),
+      cancelUrl: context.cancel_url,
     });
     const sent = await sendEmail({
       to: ctx.booker_email,
-      subject: mail.subject,
-      html: mail.html,
+      subject: custom?.subject ?? mail.subject,
+      html: custom?.html ?? mail.html,
     });
     await logNotification(supabase, {
       bookingId: ctx.id,

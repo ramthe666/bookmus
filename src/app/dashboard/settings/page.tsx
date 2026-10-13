@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { updateProfile } from "../actions";
 
@@ -109,6 +110,20 @@ export default async function SettingsPage() {
           </button>
         </div>
       </form>
+
+      <Link
+        href="/dashboard/settings/templates"
+        className="mt-6 flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-5 transition hover:border-indigo-300 hover:shadow-sm"
+      >
+        <div>
+          <p className="font-semibold text-slate-900">Email templates</p>
+          <p className="mt-0.5 text-xs text-slate-500">
+            Customize confirmation, cancellation, reschedule and reminder
+            emails with your own wording.
+          </p>
+        </div>
+        <span className="text-sm font-medium text-indigo-600">Open →</span>
+      </Link>
     </div>
   );
 }
