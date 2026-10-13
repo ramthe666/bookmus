@@ -11,6 +11,7 @@ import {
   queueRescheduledEmail,
   queueCalendarSyncUpdate,
 } from "@/lib/booking-lifecycle";
+import { triggerWebhooks } from "@/lib/webhooks";
 import { validateSlotAvailable } from "@/app/u/actions";
 
 async function requireUser() {
@@ -221,6 +222,10 @@ export async function cancelBooking(id: string) {
   // notification. The worker sends with retries; nothing is lost on crash.
   await cleanupSyncedBooking(supabase, id);
   await queueCancellationEmail(supabase, id);
+  await triggerWebhooks(supabase, user.id, "booking.cancelled", {
+    booking_id: id,
+    via: "dashboard",
+  });
 }
 
 /**
@@ -294,6 +299,12 @@ export async function rescheduleBooking(id: string, newStartsAtIso: string) {
   // Durable side effects via the outbox.
   await queueCalendarSyncUpdate(supabase, id);
   await queueRescheduledEmail(supabase, id, oldStartsAt);
+  await triggerWebhooks(supabase, user.id, "booking.rescheduled", {
+    booking_id: id,
+    old_starts_at: oldStartsAt,
+    new_starts_at: newStart.toISOString(),
+    via: "dashboard",
+  });
 
   revalidatePath("/dashboard/bookings");
   revalidatePath("/dashboard");

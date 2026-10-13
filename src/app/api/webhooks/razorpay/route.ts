@@ -2,6 +2,22 @@ import { NextResponse } from "next/server";
 import { verifyWebhookSignature } from "@/lib/integrations/payments";
 import { createServiceClient } from "@/lib/supabase/server";
 import { finalizePaidBooking } from "@/lib/booking-lifecycle";
+import { triggerWebhooks } from "@/lib/webhooks";
+
+async function bookingOwner(
+  supabase: Awaited<ReturnType<typeof createServiceClient>>,
+  bookingId: string
+): Promise<string | null> {
+  const { data } = await supabase
+    .from("bookings")
+    .select("event_types!inner(owner_profile_id)")
+    .eq("id", bookingId)
+    .maybeSingle();
+  return (
+    (data?.event_types as unknown as { owner_profile_id: string } | undefined)
+      ?.owner_profile_id ?? null
+  );
+}
 
 /**
  * Razorpay webhook — signature-verified, idempotent.
@@ -48,13 +64,40 @@ export async function POST(request: Request) {
           .eq("status", "pending");
         // Confirm the booking (idempotent — no-op if already confirmed).
         await finalizePaidBooking(supabase, payment.booking_id as string);
+        const owner = await bookingOwner(
+          supabase,
+          payment.booking_id as string
+        );
+        if (owner) {
+          await triggerWebhooks(supabase, owner, "payment.captured", {
+            booking_id: payment.booking_id,
+            payment_id: entity.id,
+          });
+        }
       }
     } else if (event.event === "payment.failed" && entity) {
+      const { data: failedPayment } = await supabase
+        .from("payments")
+        .select("id, booking_id")
+        .eq("provider_order_id", entity.order_id)
+        .maybeSingle();
       await supabase
         .from("payments")
         .update({ status: "failed", raw_webhook: event })
         .eq("provider_order_id", entity.order_id)
         .eq("status", "pending");
+      if (failedPayment?.booking_id) {
+        const owner = await bookingOwner(
+          supabase,
+          failedPayment.booking_id as string
+        );
+        if (owner) {
+          await triggerWebhooks(supabase, owner, "payment.failed", {
+            booking_id: failedPayment.booking_id,
+            payment_id: entity.id,
+          });
+        }
+      }
     }
   } catch (e) {
     console.error("Razorpay webhook handling failed:", e);

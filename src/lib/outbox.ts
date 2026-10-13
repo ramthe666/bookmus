@@ -14,6 +14,11 @@ import {
   enqueueOutbox,
   type OutboxEventType,
 } from "@/lib/outbox-enqueue";
+import {
+  deliverWebhook,
+  recordWebhookFailure,
+  type WebhookDeliveryPayload,
+} from "@/lib/webhooks";
 
 /**
  * Durable outbox worker (spec §9.4, §11.2).
@@ -112,6 +117,17 @@ async function handleEvent(
     await handleEmailSend(supabase, row.payload);
   } else if (row.event_type.startsWith("calendar.")) {
     await handleCalendarSync(supabase, row);
+  } else if (row.event_type === "webhook.deliver") {
+    const p = row.payload as unknown as WebhookDeliveryPayload;
+    const isLastAttempt = row.attempts + 1 >= row.max_attempts;
+    try {
+      await deliverWebhook(supabase, p);
+    } catch (e) {
+      if (isLastAttempt) {
+        await recordWebhookFailure(supabase, p, row.attempts + 1, e);
+      }
+      throw e;
+    }
   } else {
     throw new Error(`Unknown outbox event type: ${row.event_type}`);
   }

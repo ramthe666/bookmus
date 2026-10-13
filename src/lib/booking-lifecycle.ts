@@ -11,6 +11,7 @@ import { logAudit } from "@/lib/audit";
 import { deleteSyncedBooking } from "@/lib/calendar-sync";
 import { enqueueOutbox } from "@/lib/outbox-enqueue";
 import { resolveCustomTemplate } from "@/lib/email-templates";
+import { triggerWebhooks } from "@/lib/webhooks";
 
 /**
  * Shared booking-lifecycle transitions (spec §7).
@@ -251,6 +252,12 @@ export async function finalizePaidBooking(
   // (so it can include the Meet link). The worker retries transient
   // failures; the email is never held hostage by a calendar outage.
   await queueConfirmSequence(supabase, bookingId);
+  if (ctx?.owner_profile_id) {
+    await triggerWebhooks(supabase, ctx.owner_profile_id, "booking.confirmed", {
+      booking_id: bookingId,
+      booker_email: ctx.booker_email,
+    });
+  }
   return true;
 }
 

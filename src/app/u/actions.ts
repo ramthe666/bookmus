@@ -17,6 +17,7 @@ import {
   finalizePaidBooking,
   queueConfirmSequence,
 } from "@/lib/booking-lifecycle";
+import { triggerWebhooks } from "@/lib/webhooks";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { logAudit } from "@/lib/audit";
 
@@ -392,6 +393,14 @@ export async function createBooking(
   if (!needsPayment) {
     await queueConfirmSequence(supabase, data.id);
   }
+
+  await triggerWebhooks(supabase, ctx.ownerProfileId, "booking.created", {
+    booking_id: data.id,
+    event_type_id: input.eventTypeId,
+    starts_at: input.startsAtIso,
+    booker_email: input.email,
+    status: needsPayment ? "pending" : "confirmed",
+  });
 
   return result;
 }

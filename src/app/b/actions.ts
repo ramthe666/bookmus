@@ -8,6 +8,7 @@ import {
   cleanupSyncedBooking,
 } from "@/lib/booking-lifecycle";
 import { validateSlotAvailable } from "@/app/u/actions";
+import { triggerWebhooks } from "@/lib/webhooks";
 import { logAudit } from "@/lib/audit";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
@@ -75,6 +76,12 @@ export async function cancelBookingByToken(
   // Durable side effects: calendar cleanup + guest notification.
   await cleanupSyncedBooking(supabase, booking.id as string);
   await queueCancellationEmail(supabase, booking.id as string);
+
+  await triggerWebhooks(supabase, et.owner_profile_id, "booking.cancelled", {
+    booking_id: booking.id,
+    booker_email: booking.booker_email,
+    via: "guest_link",
+  });
 
   return { ok: true };
 }
@@ -160,6 +167,13 @@ export async function rescheduleBookingByToken(
   // Durable side effects: move the linked provider event + notify.
   await queueCalendarSyncUpdate(supabase, booking.id as string);
   await queueRescheduledEmail(supabase, booking.id as string, oldStartsAt);
+
+  await triggerWebhooks(supabase, et.owner_profile_id, "booking.rescheduled", {
+    booking_id: booking.id,
+    old_starts_at: oldStartsAt,
+    new_starts_at: newStart.toISOString(),
+    via: "guest_link",
+  });
 
   return { ok: true, newStartsAtIso: newStart.toISOString() };
 }

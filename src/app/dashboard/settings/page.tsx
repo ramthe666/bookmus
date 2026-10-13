@@ -124,6 +124,19 @@ export default async function SettingsPage() {
         </div>
         <span className="text-sm font-medium text-indigo-600">Open →</span>
       </Link>
+
+      <Link
+        href="/dashboard/settings/webhooks"
+        className="mt-3 flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-5 transition hover:border-indigo-300 hover:shadow-sm"
+      >
+        <div>
+          <p className="font-semibold text-slate-900">Webhooks</p>
+          <p className="mt-0.5 text-xs text-slate-500">
+            Real-time HTTPS callbacks for booking and payment events.
+          </p>
+        </div>
+        <span className="text-sm font-medium text-indigo-600">Open →</span>
+      </Link>
     </div>
   );
 }

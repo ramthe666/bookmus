@@ -51,7 +51,7 @@ No existing migrations were modified; all proposed schema work is additive.
 | Booking-page builder (theme/sections/publish) | ❌ | Public page is fixed layout |
 | CRM (contacts, consent, sync) | ⚠️ | Customer directory + detail + private notes live (`/dashboard/customers`, `customer_notes` table, 2026-10-13); provider sync not started |
 | Reports (funnel, utilization, no-show, revenue) | ⚠️ | `/dashboard/reports`: volume chart, cancellation/no-show rates, captured revenue, payment success, documented metric definitions (2026-10-13); funnel + utilization not yet |
-| Outgoing webhooks | ❌ | — |
+| Outgoing webhooks | ✅ | `webhook_endpoints` + `webhook_deliveries` (migration `20261013210000`); HMAC-SHA256 signed deliveries through the outbox with retries + failure log; triggers on booking created/confirmed/cancelled/rescheduled and payment captured/failed; settings UI with secret reveal, pause/resume, delivery log (2026-10-13) |
 | Reschedule/cancel policy engine | ❌ | — |
 | Notification delivery center (queued/sent/failed) | ⚠️ | `notification_log` written; no UI, no retry controls |
 | Meeting provider separation (Meet ≠ Calendar) | ⚠️ | Meet link auto-created via Calendar conferenceData; no standalone meeting provider model |

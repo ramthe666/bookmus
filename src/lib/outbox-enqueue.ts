@@ -4,7 +4,8 @@ export type OutboxEventType =
   | "email.send"
   | "calendar.sync_create"
   | "calendar.sync_update"
-  | "calendar.sync_delete";
+  | "calendar.sync_delete"
+  | "webhook.deliver";
 
 /**
  * Enqueue-only side of the outbox (no worker imports — safe to use from
