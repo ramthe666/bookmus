@@ -15,9 +15,8 @@ import {
 import { createServiceClient } from "@/lib/supabase/server";
 import {
   finalizePaidBooking,
-  sendConfirmationForBooking,
+  queueConfirmSequence,
 } from "@/lib/booking-lifecycle";
-import { syncBookingToCalendars } from "@/lib/calendar-sync";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { logAudit } from "@/lib/audit";
 
@@ -388,11 +387,10 @@ export async function createBooking(
     });
   }
 
-  // Confirmation email + calendar event go out immediately only for free
-  // events. Paid events get them when payment is verified (finalizePaidBooking).
+  // Durable confirm sequence (calendar sync → confirmation email) for free
+  // events. Paid events get it when payment is verified (finalizePaidBooking).
   if (!needsPayment) {
-    await syncBookingToCalendars(supabase, data.id);
-    await sendConfirmationForBooking(supabase, data.id);
+    await queueConfirmSequence(supabase, data.id);
   }
 
   return result;

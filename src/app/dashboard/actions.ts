@@ -4,17 +4,13 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { ensureDefaultSchedule } from "@/lib/scheduling";
-import {
-  sendEmail,
-  bookingCancellationEmail,
-  isEmailConfigured,
-} from "@/lib/integrations/email";
 import { logAudit } from "@/lib/audit";
 import {
   cleanupSyncedBooking,
-  sendRescheduledForBooking,
+  queueCancellationEmail,
+  queueRescheduledEmail,
+  queueCalendarSyncUpdate,
 } from "@/lib/booking-lifecycle";
-import { updateSyncedBooking } from "@/lib/calendar-sync";
 import { validateSlotAvailable } from "@/app/u/actions";
 
 async function requireUser() {
@@ -221,52 +217,10 @@ export async function cancelBooking(id: string) {
   revalidatePath("/dashboard/bookings");
   revalidatePath("/dashboard");
 
-  // Remove the linked provider event — best effort, surfaced on the booking.
+  // Durable side effects via the outbox: calendar cleanup + guest
+  // notification. The worker sends with retries; nothing is lost on crash.
   await cleanupSyncedBooking(supabase, id);
-
-  // Notify the guest — best effort, never fails the cancellation.
-  try {
-    if (booking && isEmailConfigured()) {
-      const et = booking.event_types as unknown as { title: string };
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("display_name, timezone")
-        .eq("id", user.id)
-        .maybeSingle();
-      const whenText = new Intl.DateTimeFormat("en-IN", {
-        timeZone: booking.booker_timezone ?? profile?.timezone ?? "Asia/Kolkata",
-        weekday: "long",
-        day: "numeric",
-        month: "long",
-        hour: "numeric",
-        minute: "2-digit",
-        hour12: true,
-      }).format(new Date(booking.starts_at));
-      const mail = bookingCancellationEmail({
-        hostName: profile?.display_name ?? "your host",
-        eventTitle: et.title,
-        whenText,
-        bookerName: booking.booker_name,
-      });
-      const sent = await sendEmail({
-        to: booking.booker_email,
-        subject: mail.subject,
-        html: mail.html,
-      });
-      await supabase.rpc("log_notification", {
-        p_booking_id: booking.id,
-        p_channel: "email",
-        p_template: "booking_cancellation",
-        p_recipient: booking.booker_email,
-        p_provider: "resend",
-        p_provider_id: sent.providerId ?? null,
-        p_status: sent.ok ? "sent" : "failed",
-        p_error: sent.error ?? null,
-      });
-    }
-  } catch (e) {
-    console.error("Cancellation email failed:", e);
-  }
+  await queueCancellationEmail(supabase, id);
 }
 
 /**
@@ -337,8 +291,9 @@ export async function rescheduleBooking(id: string, newStartsAtIso: string) {
     },
   });
 
-  await updateSyncedBooking(supabase, id);
-  await sendRescheduledForBooking(supabase, id, oldStartsAt);
+  // Durable side effects via the outbox.
+  await queueCalendarSyncUpdate(supabase, id);
+  await queueRescheduledEmail(supabase, id, oldStartsAt);
 
   revalidatePath("/dashboard/bookings");
   revalidatePath("/dashboard");

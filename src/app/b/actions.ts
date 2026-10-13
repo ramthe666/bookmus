@@ -2,11 +2,11 @@
 
 import { createServiceClient } from "@/lib/supabase/server";
 import {
-  sendCancellationForBooking,
-  sendRescheduledForBooking,
+  queueCancellationEmail,
+  queueRescheduledEmail,
+  queueCalendarSyncUpdate,
   cleanupSyncedBooking,
 } from "@/lib/booking-lifecycle";
-import { updateSyncedBooking } from "@/lib/calendar-sync";
 import { validateSlotAvailable } from "@/app/u/actions";
 import { logAudit } from "@/lib/audit";
 import { enforceRateLimit } from "@/lib/rate-limit";
@@ -72,12 +72,9 @@ export async function cancelBookingByToken(
     metadata: { reason: cancelReason, via: "guest_link" },
   });
 
-  // Remove the linked provider event — best effort, failure is surfaced
-  // on the booking and never rolls back the cancellation.
+  // Durable side effects: calendar cleanup + guest notification.
   await cleanupSyncedBooking(supabase, booking.id as string);
-
-  // Notify the guest — best effort, never fails the cancellation.
-  await sendCancellationForBooking(supabase, booking.id as string);
+  await queueCancellationEmail(supabase, booking.id as string);
 
   return { ok: true };
 }
@@ -160,11 +157,9 @@ export async function rescheduleBookingByToken(
     },
   });
 
-  // Move the linked provider event in place — best effort, surfaced.
-  await updateSyncedBooking(supabase, booking.id as string);
-
-  // Notify with old → new times.
-  await sendRescheduledForBooking(supabase, booking.id as string, oldStartsAt);
+  // Durable side effects: move the linked provider event + notify.
+  await queueCalendarSyncUpdate(supabase, booking.id as string);
+  await queueRescheduledEmail(supabase, booking.id as string, oldStartsAt);
 
   return { ok: true, newStartsAtIso: newStart.toISOString() };
 }

@@ -66,9 +66,12 @@ advanced routing forms — all ❌ Missing, intentionally deferred per spec.
 1. ✅ **Double-book race** (§5.3): `bookings_no_overlap` exclusion constraint
    (migration `20261013170000`); app check kept for friendly errors; `23P01`
    mapped to "that time was just taken" (2026-10-13).
-2. **No durable outbox** (§9.4/§11.2): emails + calendar sync run inline in the
-   request. A crash mid-request can lose them. Fix: `outbox_events` table +
-   worker (cron) with idempotent claim/retry — next slice.
+2. ✅ **No durable outbox** (§9.4/§11.2): `20261013180000_outbox.sql` adds
+   `outbox_events` + race-safe `claim_outbox_events` RPC (SKIP LOCKED). All
+   lifecycle emails and calendar syncs enqueue durably; the cron worker
+   processes with exponential-backoff retries; permanent failures surface on
+   the Activity page. A reconciliation sweep re-enqueues work missed by a
+   crash. Reminders also flow through the outbox (2026-10-13).
 3. ✅ **Calendar sync failure invisible** (§8.2): `calendar_sync_status` columns
    (migration `20261013170000`); `src/lib/calendar-sync.ts` creates/updates/
    deletes linked provider events with visible status; failures surface on the
@@ -86,7 +89,7 @@ Per spec §15.1 (small vertical slices, additive migrations only):
 4. ✅ **Audit trail** (2026-10-13)
 5. ✅ **Reschedule via token** (guest) + host reschedule (2026-10-13)
 6. ✅ **No-double-book**: exclusion-constraint migration (2026-10-13)
-7. **Outbox**: `outbox_events` + cron worker for email/calendar retries — next
+7. ✅ **Outbox** (2026-10-13)
 8. ✅ **Busy-time integration** (2026-10-13)
 9. ✅ **Internal calendar week view** + sync-health indicators (2026-10-13)
 10. Roles/workspaces/staff, page builder, template editor, CRM, reports (spec phases 5–8)

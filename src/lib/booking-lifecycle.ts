@@ -4,10 +4,12 @@ import {
   bookingConfirmationEmail,
   bookingCancellationEmail,
   bookingRescheduledEmail,
+  bookingReminderEmail,
   isEmailConfigured,
 } from "@/lib/integrations/email";
 import { logAudit } from "@/lib/audit";
-import { syncBookingToCalendars, deleteSyncedBooking } from "@/lib/calendar-sync";
+import { deleteSyncedBooking } from "@/lib/calendar-sync";
+import { enqueueOutbox } from "@/lib/outbox-enqueue";
 
 /**
  * Shared booking-lifecycle transitions (spec §7).
@@ -216,19 +218,143 @@ export async function finalizePaidBooking(
     },
   });
 
-  // Linked provider calendar event (best effort, status visible on booking).
-  await syncBookingToCalendars(supabase, bookingId);
-
-  await sendConfirmationForBooking(supabase, bookingId);
+  // Durable side effects: calendar sync first, then the confirmation email
+  // (so it can include the Meet link). The worker retries transient
+  // failures; the email is never held hostage by a calendar outage.
+  await queueConfirmSequence(supabase, bookingId);
   return true;
 }
 
-/** Cancel-side calendar cleanup shared by guest + host flows. */
+/** Cancel-side calendar cleanup shared by guest + host flows (durable). */
 export async function cleanupSyncedBooking(
   supabase: SupabaseClient,
   bookingId: string
 ): Promise<void> {
-  await deleteSyncedBooking(supabase, bookingId);
+  await enqueueOutbox(
+    supabase,
+    "calendar.sync_delete",
+    { booking_id: bookingId },
+    `calendar_sync_delete:${bookingId}`
+  );
+}
+
+/**
+ * Durable confirm sequence: calendar sync first, then the confirmation
+ * email (so it can carry the Meet link). Used for free events (immediate)
+ * and paid events (via finalizePaidBooking).
+ */
+export async function queueConfirmSequence(
+  supabase: SupabaseClient,
+  bookingId: string
+): Promise<void> {
+  await enqueueOutbox(
+    supabase,
+    "calendar.sync_create",
+    {
+      booking_id: bookingId,
+      followup: { template: "booking_confirmation", booking_id: bookingId },
+    },
+    `calendar_sync_create:${bookingId}`
+  );
+}
+
+/** Durable booking emails — enqueue, the worker sends with retries. */
+export async function queueConfirmationEmail(
+  supabase: SupabaseClient,
+  bookingId: string
+): Promise<void> {
+  await enqueueOutbox(
+    supabase,
+    "email.send",
+    { template: "booking_confirmation", booking_id: bookingId },
+    `booking_confirmation:${bookingId}`
+  );
+}
+
+export async function queueCancellationEmail(
+  supabase: SupabaseClient,
+  bookingId: string
+): Promise<void> {
+  await enqueueOutbox(
+    supabase,
+    "email.send",
+    { template: "booking_cancellation", booking_id: bookingId },
+    `booking_cancellation:${bookingId}:${Date.now()}`
+  );
+}
+
+export async function queueRescheduledEmail(
+  supabase: SupabaseClient,
+  bookingId: string,
+  oldStartsAtIso: string
+): Promise<void> {
+  await enqueueOutbox(
+    supabase,
+    "email.send",
+    {
+      template: "booking_rescheduled",
+      booking_id: bookingId,
+      old_starts_at: oldStartsAtIso,
+    },
+    `booking_rescheduled:${bookingId}:${oldStartsAtIso}`
+  );
+}
+
+export async function queueCalendarSyncUpdate(
+  supabase: SupabaseClient,
+  bookingId: string
+): Promise<void> {
+  await enqueueOutbox(
+    supabase,
+    "calendar.sync_update",
+    { booking_id: bookingId },
+    `calendar_sync_update:${bookingId}:${Date.now()}`
+  );
+}
+
+/**
+ * 24-hour reminder for a confirmed booking. Idempotent: the caller
+ * deduplicates via notification_log before enqueueing, and the worker's
+ * idempotency key prevents double-enqueue.
+ */
+export async function sendReminderForBooking(
+  supabase: SupabaseClient,
+  bookingId: string
+): Promise<void> {
+  try {
+    if (!isEmailConfigured()) return;
+    const { data: b } = await supabase
+      .from("bookings")
+      .select("id, starts_at, status, booker_name, booker_email, booker_timezone, meeting_url")
+      .eq("id", bookingId)
+      .maybeSingle();
+    if (!b || b.status !== "confirmed") return;
+    const ctx = await loadMailContext(supabase, bookingId);
+    if (!ctx) return;
+    const mail = bookingReminderEmail({
+      hostName: ctx.host_name,
+      eventTitle: ctx.event_title,
+      whenText: formatWhen(ctx.starts_at, ctx.booker_timezone),
+      bookerName: ctx.booker_name,
+      meetingUrl: ctx.meeting_url,
+    });
+    const sent = await sendEmail({
+      to: ctx.booker_email,
+      subject: mail.subject,
+      html: mail.html,
+    });
+    await logNotification(supabase, {
+      bookingId: ctx.id,
+      template: "booking_reminder",
+      recipient: ctx.booker_email,
+      providerId: sent.providerId ?? null,
+      ok: sent.ok,
+      error: sent.error ?? null,
+    });
+  } catch (e) {
+    console.error("Reminder email failed:", e);
+    throw e; // let the outbox retry transient failures
+  }
 }
 
 /** Reschedule notification (old → new time, both with timezone). */
